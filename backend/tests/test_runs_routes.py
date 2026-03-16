@@ -13,7 +13,7 @@ BACKEND_ROOT = PROJECT_ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.api.routes.runs import _build_results_payload
+from app.api.routes.runs import _build_results_payload, _resolve_child_path
 
 
 class RunsRoutesResultsPayloadTests(unittest.TestCase):
@@ -66,6 +66,38 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
             self.assertIsNone(payload["audit_report_path"])
             self.assertIn("final_risk_summary", payload)
             self.assertIn("asset_usage_summary", payload)
+
+    def test_resolve_child_path_accepts_run_relative_reveal_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            reveal_index = run_path / "presentation" / "reveal" / "index.html"
+            reveal_index.parent.mkdir(parents=True, exist_ok=True)
+            reveal_index.write_text("<html></html>", encoding="utf-8")
+
+            resolved = _resolve_child_path(
+                base_dir=(run_path / "presentation" / "reveal").resolve(),
+                candidate_path="presentation/reveal/index.html",
+                run_path=run_path,
+            )
+
+            self.assertEqual(resolved, reveal_index.resolve())
+
+    def test_resolve_child_path_blocks_traversal_outside_base(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            assets_root = run_path / "presentation" / "reveal" / "assets"
+            assets_root.mkdir(parents=True, exist_ok=True)
+            outside_file = run_path / "presentation" / "reveal" / "index.html"
+            outside_file.parent.mkdir(parents=True, exist_ok=True)
+            outside_file.write_text("<html></html>", encoding="utf-8")
+
+            resolved = _resolve_child_path(
+                base_dir=assets_root.resolve(),
+                candidate_path="../index.html",
+                run_path=run_path,
+            )
+
+            self.assertIsNone(resolved)
 
 
 if __name__ == "__main__":

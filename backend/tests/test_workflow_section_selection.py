@@ -1164,13 +1164,13 @@ class WorkflowRuntimeOptionTests(WorkflowReferenceCitationPolicyTests):
 
 
 class WorkflowStructuralOrderingTests(unittest.TestCase):
-    def _build_plan(self, slides: list[dict[str, object]], target_count: int) -> PresentationPlan:
+    def _build_plan(self, slides: list[dict[str, object]], target_count: int, language: str = "en") -> PresentationPlan:
         return PresentationPlan.model_validate(
             {
                 "deck_metadata": {
                     "title": "Deck",
                     "subtitle": "Sub",
-                    "language": "en",
+                    "language": language,
                     "presentation_style": "journal_club",
                     "target_audience": "research_specialists",
                     "target_duration_minutes": 20,
@@ -1328,6 +1328,112 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
         titles = [slide.title for slide in updated.slides]
         self.assertEqual(titles[-2], "Conclusion")
         self.assertEqual(titles[-1], "Appendix A")
+
+    def test_backfill_avoids_duplicate_conclusion_support_title(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Deck",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "conclusion",
+                    "title": "Conclusion",
+                    "objective": "Close",
+                    "key_points": ["Close one", "Close two", "Close three", "Close four"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+            ],
+            target_count=4,
+        )
+
+        sections = [
+            {
+                "section_id": "S11",
+                "section_title": "Conclusion",
+                "section_role": ["conclusion_takeaways"],
+                "key_claims": [{"claim": "Main takeaway", "notes": ""}],
+                "important_details": ["Detail"],
+            },
+            {
+                "section_id": "S12",
+                "section_title": "Results",
+                "section_role": ["experiment_result_interpretation"],
+                "key_claims": [{"claim": "Result improves baseline by 10%", "notes": "validated"}],
+                "important_details": ["Confidence interval remains narrow"],
+            },
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=4,
+        )
+
+        titles = [slide.title for slide in updated.slides]
+        self.assertEqual(titles.count("Conclusion: Supporting Detail"), 0)
+
+    def test_spanish_backfill_uses_localized_support_text(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Mazo",
+                    "objective": "Abrir",
+                    "key_points": ["Titulo", "Autores", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                }
+            ],
+            target_count=2,
+            language="es",
+        )
+
+        sections = [
+            {
+                "section_id": "S21",
+                "section_title": "Resultados",
+                "section_role": ["experiment_result_interpretation"],
+                "key_claims": [{"claim": "The method improves throughput", "notes": ""}],
+                "important_details": ["Measured over three datasets"],
+                "summary": "English fallback summary",
+                "why_it_matters": "Explicar hallazgos principales",
+            }
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=2,
+        )
+
+        added_slide = updated.slides[1]
+        self.assertIn("Detalle de apoyo", added_slide.title)
+        self.assertEqual(added_slide.citations[0].short_citation, "Articulo fuente")
+        self.assertTrue(any("Esta diapositiva de apoyo" in point for point in added_slide.key_points))
 
 
 if __name__ == "__main__":

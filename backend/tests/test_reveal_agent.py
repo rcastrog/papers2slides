@@ -463,8 +463,79 @@ class RevealAgentSmokeTest(unittest.TestCase):
             html_content = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn("citation-chip", html_content)
             self.assertIn("Why cited", html_content)
-            self.assertIn("supports the claim that Obj", html_content)
-            self.assertIn("provides method background for Obj", html_content)
+            self.assertIn("supports the claim about A", html_content)
+            self.assertIn("provides method background for A", html_content)
+
+    def test_renderer_localizes_citation_explainability_for_spanish(self) -> None:
+        llm_client = LLMClient(transport=FakeTransport())
+        prompt_loader = PromptLoader(prompts_dir=PROJECT_ROOT / "backend" / "app" / "prompts")
+        agent = RevealBuilderAgent(llm_client=llm_client, prompt_loader=prompt_loader)
+
+        plan = PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Mazo ES",
+                    "subtitle": "Sub",
+                    "language": "es",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": 12,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "slide_role": "result",
+                        "title": "Resultados",
+                        "objective": "Describir hallazgos",
+                        "key_points": ["El metodo reduce el error en 12%"],
+                        "must_avoid": [],
+                        "visuals": [
+                            {
+                                "visual_type": "text_only",
+                                "asset_id": "none",
+                                "source_origin": "none",
+                                "usage_mode": "none",
+                                "placement_hint": "center_focus",
+                                "why_this_visual": "Simple",
+                            }
+                        ],
+                        "source_support": [],
+                        "citations": [
+                            {
+                                "short_citation": "Alpha et al., 2024",
+                                "source_kind": "reference_paper",
+                                "citation_purpose": "source_of_claim",
+                            }
+                        ],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    }
+                ],
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "reveal"
+            agent.render(
+                presentation_plan=plan,
+                speaker_notes=_build_minimal_notes(),
+                generated_visuals=_build_minimal_visuals(),
+                output_dir=output_dir,
+                asset_map={},
+            )
+
+            html_content = (output_dir / "index.html").read_text(encoding="utf-8")
+            self.assertIn("Por que se cita", html_content)
+            self.assertIn("respalda la afirmacion sobre", html_content)
 
 
 if __name__ == "__main__":

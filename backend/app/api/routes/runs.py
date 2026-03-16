@@ -249,6 +249,35 @@ def download_artifact(run_id: str, artifact_name: str) -> FileResponse:
     return FileResponse(path=candidate, filename=candidate.name)
 
 
+@router.get("/runs/{run_id}/reveal/index.html")
+def get_reveal_index(run_id: str) -> FileResponse:
+    """Serve the reveal entry HTML from within the run folder."""
+    run_path = _resolve_run_path(run_id)
+    results = get_run_results(run_id)
+
+    selected = results.reveal_path
+    if not selected:
+        raise HTTPException(status_code=404, detail="Reveal output not found")
+
+    reveal_root = (run_path / "presentation" / "reveal").resolve()
+    candidate = _resolve_child_path(base_dir=reveal_root, candidate_path=selected, run_path=run_path)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Reveal output not found")
+
+    return FileResponse(path=candidate, media_type="text/html")
+
+
+@router.get("/runs/{run_id}/reveal/assets/{asset_path:path}")
+def get_reveal_asset(run_id: str, asset_path: str) -> FileResponse:
+    """Serve reveal assets while preventing path traversal."""
+    run_path = _resolve_run_path(run_id)
+    assets_root = (run_path / "presentation" / "reveal" / "assets").resolve()
+    candidate = _resolve_child_path(base_dir=assets_root, candidate_path=asset_path, run_path=run_path)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="Reveal asset not found")
+    return FileResponse(path=candidate)
+
+
 def _resolve_run_path(run_id: str) -> Path:
     backend_root = Path(__file__).resolve().parents[3]
     run_manager = RunManager(backend_root / "runs")
@@ -282,3 +311,25 @@ def _count_audit_findings(run_path: Path) -> int | None:
         audits = payload.get("slide_audits", [])
         return sum(len(item.get("findings", [])) for item in audits if isinstance(item, dict))
     return None
+
+
+def _resolve_child_path(*, base_dir: Path, candidate_path: str, run_path: Path) -> Path | None:
+    if not candidate_path:
+        return None
+
+    candidate = Path(candidate_path)
+    if not candidate.is_absolute():
+        run_relative_candidate = (run_path / candidate).resolve()
+        base_relative_candidate = (base_dir / candidate).resolve()
+        candidate = run_relative_candidate if run_relative_candidate.is_file() else base_relative_candidate
+    else:
+        candidate = candidate.resolve()
+
+    try:
+        candidate.relative_to(base_dir)
+    except ValueError:
+        return None
+
+    if not candidate.is_file():
+        return None
+    return candidate

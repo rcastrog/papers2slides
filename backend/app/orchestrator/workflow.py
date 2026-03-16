@@ -8,6 +8,7 @@ import os
 import shutil
 import logging
 import re
+import unicodedata
 from dataclasses import replace
 import urllib.request
 import urllib.parse
@@ -1577,6 +1578,7 @@ def _enforce_slide_density_and_target_count(
         if section_id:
             sections_by_id[section_id] = section
 
+    language = str(payload.get("deck_metadata", {}).get("language", "en")).strip().lower() if isinstance(payload.get("deck_metadata", {}), dict) else "en"
     changed = False
     structure_changed = False
 
@@ -1588,7 +1590,12 @@ def _enforce_slide_density_and_target_count(
         max_points = 6 if role != "title" else 4
 
         key_points = [str(item).strip() for item in slide.get("key_points", []) if str(item).strip()]
-        candidates = _build_density_candidates_for_slide(slide=slide, sections_by_id=sections_by_id, section_payloads=section_payloads)
+        candidates = _build_density_candidates_for_slide(
+            slide=slide,
+            sections_by_id=sections_by_id,
+            section_payloads=section_payloads,
+            language=language,
+        )
         for candidate in candidates:
             if len(key_points) >= min_points:
                 break
@@ -1596,7 +1603,7 @@ def _enforce_slide_density_and_target_count(
                 key_points.append(candidate)
 
         if role != "title":
-            key_points = [_expand_sparse_key_point(point, slide) for point in key_points]
+            key_points = [_expand_sparse_key_point(point, slide, language=language) for point in key_points]
 
         if len(key_points) > max_points:
             key_points = key_points[:max_points]
@@ -1610,6 +1617,7 @@ def _enforce_slide_density_and_target_count(
             existing_slides=slides,
             section_payloads=section_payloads,
             target_slide_count=target,
+            language=language,
         )
         if addenda:
             insert_at = len(slides)
@@ -1665,6 +1673,7 @@ def _build_density_candidates_for_slide(
     slide: dict[str, Any],
     sections_by_id: dict[str, dict[str, Any]],
     section_payloads: list[dict[str, Any]],
+    language: str,
 ) -> list[str]:
     candidates: list[str] = []
     seen: set[str] = set()
@@ -1726,17 +1735,20 @@ def _build_density_candidates_for_slide(
             _add(str(detail))
 
         for caution in section.get("limitations_or_cautions", [])[:2]:
-            _add(f"Caution: {str(caution).strip()}")
+            caution_prefix = "Precaucion" if language == "es" else "Caution"
+            _add(f"{caution_prefix}: {str(caution).strip()}")
 
     return candidates
 
 
-def _expand_sparse_key_point(point: str, slide: dict[str, Any]) -> str:
+def _expand_sparse_key_point(point: str, slide: dict[str, Any], *, language: str = "en") -> str:
     cleaned = re.sub(r"\s+", " ", str(point or "")).strip()
     if len(cleaned) >= 55:
         return cleaned
     objective = re.sub(r"\s+", " ", str(slide.get("objective", "")).strip())
     if objective and objective.lower() not in cleaned.lower():
+        if language == "es":
+            return f"{cleaned} Esto respalda directamente: {objective}."
         return f"{cleaned} This directly supports: {objective}."
     return cleaned
 
@@ -1746,6 +1758,7 @@ def _build_supporting_slides_for_target(
     existing_slides: list[dict[str, Any]],
     section_payloads: list[dict[str, Any]],
     target_slide_count: int,
+    language: str,
 ) -> list[dict[str, Any]]:
     additional: list[dict[str, Any]] = []
     if len(existing_slides) >= target_slide_count:
@@ -1767,12 +1780,35 @@ def _build_supporting_slides_for_target(
     if preferred_sections:
         curated_sections = preferred_sections
 
+    has_existing_conclusion = any(
+        isinstance(slide, dict)
+        and (
+            str(slide.get("slide_role", "")).strip().lower() == "conclusion"
+            or _normalize_title_for_match(str(slide.get("title", ""))).startswith("conclusion")
+        )
+        for slide in existing_slides
+    )
+    if has_existing_conclusion:
+        curated_sections = [
+            section
+            for section in curated_sections
+            if "conclusion_takeaways" not in (section.get("section_role", []) or [])
+        ]
+
     if not curated_sections:
         return additional
 
+    existing_title_keys = {
+        _normalize_title_for_match(str(slide.get("title", "")))
+        for slide in existing_slides
+        if isinstance(slide, dict)
+    }
+
     start_number = len(existing_slides) + 1
+    cursor = 0
     while start_number + len(additional) <= target_slide_count:
-        section = curated_sections[len(additional) % len(curated_sections)]
+        section = curated_sections[cursor % len(curated_sections)]
+        cursor += 1
         role_list = section.get("section_role", [])
         primary_role = role_list[0] if isinstance(role_list, list) and role_list else "experiment_result_interpretation"
         slide_role = {
@@ -1790,36 +1826,91 @@ def _build_supporting_slides_for_target(
                 claim_text = str(claim.get("claim", "")).strip()
                 note_text = str(claim.get("notes", "")).strip()
                 if claim_text and note_text and note_text.lower() not in claim_text.lower():
-                    key_points.append(f"{claim_text} ({note_text})")
+                    combined = f"{claim_text} ({note_text})"
+                    if language != "es" or not _looks_predominantly_english(combined):
+                        key_points.append(combined)
                 elif claim_text:
-                    key_points.append(claim_text)
+                    if language != "es" or not _looks_predominantly_english(claim_text):
+                        key_points.append(claim_text)
 
         for detail in section.get("important_details", [])[:2]:
             detail_text = str(detail).strip()
             if detail_text and detail_text not in key_points:
-                key_points.append(detail_text)
+                if language != "es" or not _looks_predominantly_english(detail_text):
+                    key_points.append(detail_text)
 
         if len(key_points) < 4:
             summary = str(section.get("summary", "")).strip()
             if summary and summary not in key_points:
-                key_points.append(summary)
+                if language != "es" or not _looks_predominantly_english(summary):
+                    key_points.append(summary)
 
-        key_points = [_expand_sparse_key_point(item, {"objective": section.get("why_it_matters", "")}) for item in key_points[:6]]
+        key_points = [
+            _expand_sparse_key_point(item, {"objective": section.get("why_it_matters", "")}, language=language)
+            for item in key_points[:6]
+        ]
+        fallback_support_line = (
+            "Esta diapositiva de apoyo conserva detalles tecnicos basados en la fuente para la discusion."
+            if language == "es"
+            else "This support slide preserves source-grounded detail for technical discussion."
+        )
         while len(key_points) < 4:
-            key_points.append("This support slide preserves source-grounded detail for technical discussion.")
+            key_points.append(fallback_support_line)
 
         section_id = str(section.get("section_id", "")).strip() or f"s{start_number + len(additional)}"
-        section_title = str(section.get("section_title", "Supporting analysis")).strip()
+        default_section_title = "Analisis de soporte" if language == "es" else "Supporting analysis"
+        section_title = str(section.get("section_title", default_section_title)).strip()
+        support_suffix = "Detalle de apoyo" if language == "es" else "Supporting Detail"
+        candidate_title = f"{section_title}: {support_suffix}"
+        title = candidate_title
+        normalized_title = _normalize_title_for_match(title)
+        if normalized_title in existing_title_keys:
+            continue
+        existing_title_keys.add(normalized_title)
+
         slide_number = start_number + len(additional)
+
+        objective = (
+            "Agregar detalle basado en la fuente que no cabia en la narrativa principal."
+            if language == "es"
+            else "Add source-grounded detail that did not fit in the core narrative slides."
+        )
+        must_avoid = (
+            ["No introducir afirmaciones no sustentadas por la seccion fuente."]
+            if language == "es"
+            else ["Introducing claims not grounded in the source section."]
+        )
+        support_note = (
+            "Expandida desde el analisis de seccion para mejorar profundidad y cobertura del objetivo."
+            if language == "es"
+            else "Expanded from section analysis to improve depth and target coverage."
+        )
+        short_citation = "Articulo fuente" if language == "es" else "Source paper"
+        speaker_notes = (
+            [
+                "Usa esta diapositiva para discusion tecnica mas profunda solo si el tiempo lo permite.",
+                "Conecta cada punto con la seccion fuente analizada.",
+            ]
+            if language == "es"
+            else [
+                "Use this slide for deeper technical discussion only if time allows.",
+                "Tie each bullet directly to the analyzed source section.",
+            ]
+        )
+        confidence_note = (
+            "Auto-policy: se agrego una diapositiva de apoyo para cumplir el total solicitado de diapositivas."
+            if language == "es"
+            else "Auto-policy: supplemental support slide added to satisfy requested slide count."
+        )
 
         additional.append(
             {
                 "slide_number": slide_number,
                 "slide_role": slide_role,
-                "title": f"{section_title}: Supporting Detail",
-                "objective": "Add source-grounded detail that did not fit in the core narrative slides.",
+                "title": title,
+                "objective": objective,
                 "key_points": key_points,
-                "must_avoid": ["Introducing claims not grounded in the source section."],
+                "must_avoid": must_avoid,
                 "visuals": [
                     {
                         "visual_type": "text_only",
@@ -1827,30 +1918,29 @@ def _build_supporting_slides_for_target(
                         "source_origin": "none",
                         "usage_mode": "none",
                         "placement_hint": "left_visual_right_text",
-                        "why_this_visual": "Text-first support slide to retain dense, source-grounded detail.",
+                        "why_this_visual": (
+                            "Diapositiva centrada en texto para conservar detalle denso sustentado en la fuente."
+                            if language == "es"
+                            else "Text-first support slide to retain dense, source-grounded detail."
+                        ),
                     }
                 ],
                 "source_support": [
                     {
                         "support_type": "source_section",
                         "support_id": section_id,
-                        "support_note": "Expanded from section analysis to improve depth and target coverage.",
+                        "support_note": support_note,
                     }
                 ],
                 "citations": [
                     {
-                        "short_citation": "Source paper",
+                        "short_citation": short_citation,
                         "source_kind": "source_paper",
                         "citation_purpose": "source_of_claim",
                     }
                 ],
-                "speaker_note_hooks": [
-                    "Use this slide for deeper technical discussion only if time allows.",
-                    "Tie each bullet directly to the analyzed source section.",
-                ],
-                "confidence_notes": [
-                    "Auto-policy: supplemental support slide added to satisfy requested slide count.",
-                ],
+                "speaker_note_hooks": speaker_notes,
+                "confidence_notes": [confidence_note],
                 "layout_hint": "two_column",
             }
         )
@@ -1873,7 +1963,7 @@ def _apply_structural_slide_order_policy(
         return str(slide.get("slide_role", "")).strip().lower()
 
     def _title(slide: dict[str, Any]) -> str:
-        return str(slide.get("title", "")).strip().lower()
+        return _normalize_title_for_match(str(slide.get("title", "")))
 
     def _is_title_slide(slide: dict[str, Any]) -> bool:
         return _role(slide) == "title"
@@ -1926,6 +2016,36 @@ def _apply_structural_slide_order_policy(
     if len(ordered) != len([slide for slide in slides if isinstance(slide, dict)]):
         return slides
     return ordered
+
+
+def _normalize_title_for_match(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _looks_predominantly_english(text: str) -> bool:
+    words = re.findall(r"[a-zA-Z]+", str(text or "").lower())
+    if len(words) < 5:
+        return False
+    english_markers = {
+        "the",
+        "this",
+        "that",
+        "with",
+        "from",
+        "for",
+        "and",
+        "are",
+        "is",
+        "supports",
+        "results",
+        "method",
+        "slide",
+    }
+    spanish_markers = {"el", "la", "los", "las", "con", "para", "de", "que", "y", "es", "son"}
+    english_hits = sum(1 for word in words if word in english_markers)
+    spanish_hits = sum(1 for word in words if word in spanish_markers)
+    return english_hits >= 2 and english_hits > spanish_hits
 
 
 def _map_artifact_type_to_visual_type(artifact_type: str) -> str:

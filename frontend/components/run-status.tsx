@@ -94,7 +94,7 @@ export function RunStatus({ runId }: RunStatusProps) {
   }, [isCompleted, runId]);
 
   function handleOpenReveal() {
-    const revealUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/download/reveal`;
+    const revealUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/reveal/index.html`;
     window.open(revealUrl, "_blank", "noopener,noreferrer");
   }
 
@@ -204,6 +204,8 @@ export function RunStatus({ runId }: RunStatusProps) {
       </div>
 
       {actionMessage ? <div className="success">{actionMessage}</div> : null}
+
+      {isCompleted && !hasRevealOutput ? <div className="muted">Reveal output was not generated for this run.</div> : null}
 
       {error ? <div className="error">{error}</div> : null}
 
