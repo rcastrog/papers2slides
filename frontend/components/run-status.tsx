@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { cancelRun, getRunStatus, recoverRunA11, type RunStatusResponse } from "../lib/api";
+import { cancelRun, getRunResults, getRunStatus, recoverRunA11, type RunStatusResponse } from "../lib/api";
 import { formatStageLabel } from "../lib/stage-names";
 
 type RunStatusProps = {
@@ -16,6 +16,7 @@ export function RunStatus({ runId }: RunStatusProps) {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [hasRevealOutput, setHasRevealOutput] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +65,39 @@ export function RunStatus({ runId }: RunStatusProps) {
     return status.status === "failed" && status.current_stage === "A11";
   }, [status]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRevealAvailability() {
+      if (!isCompleted) {
+        setHasRevealOutput(false);
+        return;
+      }
+
+      try {
+        const results = await getRunResults(runId);
+        if (!cancelled) {
+          setHasRevealOutput(Boolean(results.reveal_path));
+        }
+      } catch {
+        if (!cancelled) {
+          setHasRevealOutput(false);
+        }
+      }
+    }
+
+    loadRevealAvailability();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isCompleted, runId]);
+
+  function handleOpenReveal() {
+    const revealUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/download/reveal`;
+    window.open(revealUrl, "_blank", "noopener,noreferrer");
+  }
+
   async function handleCancel() {
     setIsCancelling(true);
     setError(null);
@@ -104,23 +138,39 @@ export function RunStatus({ runId }: RunStatusProps) {
     <div className="card stack">
       <h2 style={{ margin: 0 }}>Run status</h2>
 
-      <div className="status-grid">
-        <div>Run ID: {runId}</div>
-        <div>Status: {status?.status ?? "loading"}</div>
-        <div>Current stage: {status?.current_stage ? formatStageLabel(status.current_stage) : "unknown"}</div>
-        <div>
-        Completed stages: {status?.completed_stages?.length ? status.completed_stages.map((stageId) => formatStageLabel(stageId)).join(", ") : "none"}
+      <div className="panel stack">
+        <h3 className="section-title">General</h3>
+        <div className="status-grid">
+          <div>Run ID: {runId}</div>
+          <div>Status: {status?.status ?? "loading"}</div>
+          <div>Current stage: {status?.current_stage ? formatStageLabel(status.current_stage) : "unknown"}</div>
+          <div>
+          Completed stages: {status?.completed_stages?.length ? status.completed_stages.map((stageId) => formatStageLabel(stageId)).join(", ") : "none"}
+          </div>
+          <div>Recorded stages: {status?.stage_count ?? 0}</div>
+          <div>Fallback stages: {status?.fallback_stage_count ?? 0}</div>
+          <div>Total duration: {status?.total_duration_ms != null ? `${status.total_duration_ms} ms` : "n/a"}</div>
+          <div>Warnings count: {status?.warning_count ?? 0}</div>
+          <div>Audit findings count: {status?.audit_findings_count ?? "n/a"}</div>
         </div>
-        <div>Recorded stages: {status?.stage_count ?? 0}</div>
-        <div>Fallback stages: {status?.fallback_stage_count ?? 0}</div>
-        <div>Total duration: {status?.total_duration_ms != null ? `${status.total_duration_ms} ms` : "n/a"}</div>
-        <div>Warnings count: {status?.warning_count ?? 0}</div>
-        <div>Audit findings count: {status?.audit_findings_count ?? "n/a"}</div>
       </div>
 
-      {summary && Object.keys(summary).length > 0 ? (
+      <div className="two-up">
+        <div className="panel stack">
+          <h3 className="section-title">Run Status</h3>
+          <div className="status-grid">
+            <div>Status: {status?.status ?? "loading"}</div>
+            <div>Current stage: {status?.current_stage ? formatStageLabel(status.current_stage) : "unknown"}</div>
+            <div>Recorded stages: {status?.stage_count ?? 0}</div>
+            <div>Fallback stages: {status?.fallback_stage_count ?? 0}</div>
+            <div>Total duration: {status?.total_duration_ms != null ? `${status.total_duration_ms} ms` : "n/a"}</div>
+            <div>Warnings count: {status?.warning_count ?? 0}</div>
+          </div>
+        </div>
+
         <div className="panel stack">
           <h3 className="section-title">Job Summary</h3>
+          {summary && Object.keys(summary).length > 0 ? (
           <div className="status-grid">
             <div>Style: {String(summary.presentation_style ?? "n/a")}</div>
             <div>Audience: {String(summary.target_audience ?? "n/a")}</div>
@@ -129,8 +179,11 @@ export function RunStatus({ runId }: RunStatusProps) {
             <div>Target duration: {String(summary.target_duration_minutes ?? "n/a")} min</div>
             <div>Repair on audit: {String(Boolean(summary.repair_on_audit))}</div>
           </div>
+          ) : (
+            <div className="muted">Job summary not available yet.</div>
+          )}
         </div>
-      ) : null}
+      </div>
 
       {!isTerminal ? <div className="muted">Polling every 3s until completion...</div> : null}
 
@@ -140,6 +193,9 @@ export function RunStatus({ runId }: RunStatusProps) {
             {isCancelling ? "Requesting cancel..." : "Stop run"}
           </button>
         ) : null}
+        <button className="btn-secondary" type="button" disabled={!isCompleted || !hasRevealOutput} onClick={handleOpenReveal}>
+          Open Reveal
+        </button>
         {canRecoverA11 ? (
           <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
             {isRecovering ? "Recovering..." : "Recover from A11"}
