@@ -65,6 +65,12 @@ Unless the paper structure strongly suggests otherwise, the presentation should 
 - interpretation / limitations
 - conclusion / takeaways
 
+STRUCTURAL PLACEMENT GUIDANCE
+1. When useful, use Abstract/Introduction-derived material near the beginning to establish context and tone.
+2. Do not place Abstract/Introduction-derived slides in the closing segment of the deck.
+3. Conclusion slides should typically be the final core slide.
+4. Non-conclusion slides after conclusion should be rare and usually appendix-like support.
+
 STRICT RULES
 1. Do not invent claims or examples.
 2. Do not create a slide merely because a paper section exists; create slides because they help explain the paper.

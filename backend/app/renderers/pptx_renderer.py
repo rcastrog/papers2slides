@@ -35,6 +35,8 @@ class PPTXRenderer:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         template_path, template_used, template_warnings = self._resolve_template_path(pptx_module)
         presentation = presentation_cls(str(template_path)) if template_path else presentation_cls()
+        if template_path is not None:
+            self._clear_existing_slides(presentation)
 
         notes_by_slide = {item.slide_number: item for item in speaker_notes.slide_notes}
         visuals_by_slide = {}
@@ -181,11 +183,54 @@ class PPTXRenderer:
         if default_template.is_file() and zipfile.is_zipfile(default_template):
             return None, "default", []
 
+        fallback_template = PPTXRenderer._find_fallback_template()
+        if fallback_template is not None:
+            return fallback_template, str(fallback_template), [
+                "python-pptx default template is invalid; using discovered fallback template."
+            ]
+
         raise RuntimeError(
             "python-pptx default template is missing or invalid. "
             "Set PAPER2SLIDES_PPTX_TEMPLATE_PATH to a valid .pptx template "
             "or reinstall python-pptx in the active environment."
         )
+
+    @staticmethod
+    def _find_fallback_template() -> Path | None:
+        """Find a valid local PPTX that can act as an emergency template."""
+        backend_root = Path(__file__).resolve().parents[2]
+        runs_root = backend_root / "runs"
+        if not runs_root.is_dir():
+            return None
+
+        candidates: list[Path] = []
+        patterns = [
+            "*/presentation/pptx/deck.pptx",
+            "*/output/presentation.pptx",
+        ]
+        for pattern in patterns:
+            candidates.extend(runs_root.glob(pattern))
+
+        candidates = [path for path in candidates if path.is_file() and zipfile.is_zipfile(path)]
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+        return candidates[0]
+
+    @staticmethod
+    def _clear_existing_slides(presentation: object) -> None:
+        """Ensure fallback/custom templates start with no content slides."""
+        slides = getattr(presentation, "slides", None)
+        slide_id_list = getattr(slides, "_sldIdLst", None)
+        part = getattr(presentation, "part", None)
+        if slide_id_list is None or part is None:
+            return
+
+        while len(slide_id_list):
+            r_id = slide_id_list[0].rId
+            part.drop_rel(r_id)
+            del slide_id_list[0]
 
     @staticmethod
     def _resolve_visual_asset_path(*, visual_id: str, source_artifact_ids: list[str], asset_map: dict[str, str]) -> str:

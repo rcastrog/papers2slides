@@ -21,6 +21,7 @@ from app.orchestrator.workflow import (
     _apply_citation_purpose_policy,
     _apply_generated_visual_last_resort_policy,
     _apply_reference_citation_policy,
+    _enforce_slide_density_and_target_count,
     _ensure_reference_index_coverage,
     _normalize_reference_citation_labels,
     _apply_source_only_visual_policy,
@@ -1160,6 +1161,173 @@ class WorkflowRuntimeOptionTests(WorkflowReferenceCitationPolicyTests):
         self.assertIn("Jared Kaplan", authors)
         self.assertNotIn("Kevin K. Troy Belonax", authors)
         self.assertNotIn("Jared Kaplan Amodei", authors)
+
+
+class WorkflowStructuralOrderingTests(unittest.TestCase):
+    def _build_plan(self, slides: list[dict[str, object]], target_count: int) -> PresentationPlan:
+        return PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": target_count,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": slides,
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+    def test_moves_intro_abstract_context_toward_beginning(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Transformer",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "method",
+                    "title": "Method",
+                    "objective": "Explain method",
+                    "key_points": ["Method one", "Method two", "Method three", "Method four"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [
+                        {"support_type": "source_section", "support_id": "S03", "support_note": "Background"}
+                    ],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+                {
+                    "slide_number": 3,
+                    "slide_role": "discussion",
+                    "title": "Abstract: Supporting Detail",
+                    "objective": "Set context",
+                    "key_points": ["Context one", "Context two", "Context three", "Context four"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [
+                        {"support_type": "source_section", "support_id": "S01", "support_note": "Abstract"}
+                    ],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+                {
+                    "slide_number": 4,
+                    "slide_role": "conclusion",
+                    "title": "Conclusion",
+                    "objective": "Close",
+                    "key_points": ["Close one", "Close two", "Close three", "Close four"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+            ],
+            target_count=4,
+        )
+
+        sections = [
+            {"section_id": "S01", "section_title": "Abstract", "section_role": ["framing_background"]},
+            {"section_id": "S03", "section_title": "Background", "section_role": ["method_explanation"]},
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=4,
+        )
+
+        titles = [slide.title for slide in updated.slides]
+        self.assertEqual(titles[0], "Transformer")
+        self.assertEqual(titles[1], "Abstract: Supporting Detail")
+        self.assertEqual(titles[-1], "Conclusion")
+
+    def test_conclusion_is_last_core_slide_appendix_may_follow(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Deck",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "appendix_like_support",
+                    "title": "Appendix A",
+                    "objective": "Extra detail",
+                    "key_points": ["A", "B", "C", "D"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+                {
+                    "slide_number": 3,
+                    "slide_role": "conclusion",
+                    "title": "Conclusion",
+                    "objective": "Close",
+                    "key_points": ["Close one", "Close two", "Close three", "Close four"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+            ],
+            target_count=3,
+        )
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=[],
+            target_slide_count=3,
+        )
+
+        titles = [slide.title for slide in updated.slides]
+        self.assertEqual(titles[-2], "Conclusion")
+        self.assertEqual(titles[-1], "Appendix A")
 
 
 if __name__ == "__main__":

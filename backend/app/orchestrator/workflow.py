@@ -229,6 +229,8 @@ def recover_a11_only(run_path: Path) -> dict[str, Any]:
             "run_summary": run_summary,
         }
     )
+    # Recovery succeeded; clear stale failure metadata from earlier attempts.
+    manifest.pop("failed_stage", None)
     run_manager.save_json("logs/run_manifest.json", manifest)
 
     results_summary = run_manager.read_json("logs/results_summary.json") or {}
@@ -243,6 +245,7 @@ def recover_a11_only(run_path: Path) -> dict[str, Any]:
 
     workflow_summary = run_manager.read_json("logs/workflow_summary.json") or {}
     workflow_summary["status"] = manifest["status"]
+    workflow_summary.pop("error", None)
     workflow_summary["deck_risk_level_final"] = final_audit.deck_risk_level
     workflow_summary["unresolved_high_severity_findings_count"] = unresolved_high
     workflow_summary["completed_stages"] = completed_stages
@@ -1575,6 +1578,7 @@ def _enforce_slide_density_and_target_count(
             sections_by_id[section_id] = section
 
     changed = False
+    structure_changed = False
 
     for slide in slides:
         if not isinstance(slide, dict):
@@ -1608,8 +1612,27 @@ def _enforce_slide_density_and_target_count(
             target_slide_count=target,
         )
         if addenda:
-            slides.extend(addenda)
+            insert_at = len(slides)
+            for idx, slide in enumerate(slides):
+                if not isinstance(slide, dict):
+                    continue
+                role = str(slide.get("slide_role", "")).strip().lower()
+                title = str(slide.get("title", "")).strip().lower()
+                if role == "conclusion" or title.startswith("conclusion"):
+                    insert_at = idx
+                    break
+
+            slides[insert_at:insert_at] = addenda
             changed = True
+
+    reordered_slides = _apply_structural_slide_order_policy(
+        slides=slides,
+        sections_by_id=sections_by_id,
+    )
+    if reordered_slides != slides:
+        slides = reordered_slides
+        changed = True
+        structure_changed = True
 
     for idx, slide in enumerate(slides, start=1):
         if isinstance(slide, dict):
@@ -1628,6 +1651,10 @@ def _enforce_slide_density_and_target_count(
         warnings.append(
             "Auto-policy: increased per-slide content density and backfilled supporting slides toward target slide count."
         )
+        if structure_changed:
+            warnings.append(
+                "Auto-policy: reordered structure to keep Abstract/Introduction context near the beginning and conclusions near the end (appendix-like slides may follow)."
+            )
         payload["global_warnings"] = warnings
 
     return PresentationPlan.model_validate(payload)
@@ -1731,6 +1758,15 @@ def _build_supporting_slides_for_target(
         and "reference" not in str(section.get("section_title", "")).strip().lower()
     ]
 
+    preferred_sections = [
+        section
+        for section in curated_sections
+        if str(section.get("section_title", "")).strip().lower() not in {"abstract", "introduction"}
+    ]
+
+    if preferred_sections:
+        curated_sections = preferred_sections
+
     if not curated_sections:
         return additional
 
@@ -1820,6 +1856,76 @@ def _build_supporting_slides_for_target(
         )
 
     return additional
+
+
+def _apply_structural_slide_order_policy(
+    *,
+    slides: list[dict[str, Any]],
+    sections_by_id: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Favor early context framing and keep conclusions at the end of the core narrative."""
+    if not slides:
+        return slides
+
+    context_titles = {"abstract", "introduction"}
+
+    def _role(slide: dict[str, Any]) -> str:
+        return str(slide.get("slide_role", "")).strip().lower()
+
+    def _title(slide: dict[str, Any]) -> str:
+        return str(slide.get("title", "")).strip().lower()
+
+    def _is_title_slide(slide: dict[str, Any]) -> bool:
+        return _role(slide) == "title"
+
+    def _is_appendix_like(slide: dict[str, Any]) -> bool:
+        role = _role(slide)
+        title = _title(slide)
+        return role == "appendix_like_support" or title.startswith("appendix")
+
+    def _is_conclusion(slide: dict[str, Any]) -> bool:
+        role = _role(slide)
+        title = _title(slide)
+        return role == "conclusion" or title.startswith("conclusion")
+
+    def _is_intro_or_abstract_context(slide: dict[str, Any]) -> bool:
+        title = _title(slide)
+        if title.startswith("abstract") or title.startswith("introduction"):
+            return True
+
+        for support in slide.get("source_support", []) or []:
+            if not isinstance(support, dict):
+                continue
+            if str(support.get("support_type", "")).strip().lower() != "source_section":
+                continue
+            support_id = str(support.get("support_id", "")).strip()
+            if not support_id:
+                continue
+            section = sections_by_id.get(support_id, {})
+            section_title = str(section.get("section_title", "")).strip().lower()
+            if section_title in context_titles:
+                return True
+
+        return False
+
+    title_slides = [slide for slide in slides if isinstance(slide, dict) and _is_title_slide(slide)]
+    remaining = [slide for slide in slides if isinstance(slide, dict) and not _is_title_slide(slide)]
+
+    context_slides = [slide for slide in remaining if _is_intro_or_abstract_context(slide)]
+    non_context = [slide for slide in remaining if not _is_intro_or_abstract_context(slide)]
+
+    conclusions = [slide for slide in non_context if _is_conclusion(slide)]
+    appendices = [slide for slide in non_context if _is_appendix_like(slide)]
+    core_non_context = [
+        slide
+        for slide in non_context
+        if not _is_conclusion(slide) and not _is_appendix_like(slide)
+    ]
+
+    ordered = [*title_slides, *context_slides, *core_non_context, *conclusions, *appendices]
+    if len(ordered) != len([slide for slide in slides if isinstance(slide, dict)]):
+        return slides
+    return ordered
 
 
 def _map_artifact_type_to_visual_type(artifact_type: str) -> str:
