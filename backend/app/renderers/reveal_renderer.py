@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import importlib
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,9 @@ class RevealRenderer:
                 {
                     "text": citation.short_citation,
                     "purpose": citation.citation_purpose,
+                    "slide_title": slide.title,
+                    "slide_objective": slide.objective,
+                    "key_points": list(slide.key_points),
                 }
                 for citation in slide.citations
             ]
@@ -156,7 +160,7 @@ class RevealRenderer:
             citations_html = "".join(
                 (
                     '<span class="citation-chip" '
-                    f'title="{html.escape("Why cited: " + self._purpose_label(item.get("purpose", "contextual_reference")))}">'
+                    f'title="{html.escape("Why cited: " + self._purpose_label(item))}">'
                     f'{html.escape(str(item.get("text", "")))}'
                     "</span>"
                 )
@@ -168,7 +172,7 @@ class RevealRenderer:
                     (
                         "<li>"
                         f'{html.escape(str(item.get("text", "")))}: '
-                        f'{html.escape(self._purpose_label(item.get("purpose", "contextual_reference")))}'
+                        f'{html.escape(self._purpose_label(item))}'
                         "</li>"
                     )
                     for item in citation_rows
@@ -359,14 +363,31 @@ class RevealRenderer:
         return ""
 
     @staticmethod
-    def _purpose_label(purpose: str) -> str:
-        mapping = {
-            "source_of_claim": "supports a claim from the source paper",
-            "method_background": "provides method background",
-            "contextual_reference": "provides context",
-            "attribution": "attributes title/authorship context",
-        }
-        return mapping.get(str(purpose), "provides context")
+    def _purpose_label(citation_row: dict[str, Any]) -> str:
+        purpose = str(citation_row.get("purpose", "contextual_reference")).strip().lower()
+        slide_title = str(citation_row.get("slide_title", "")).strip()
+        slide_objective = str(citation_row.get("slide_objective", "")).strip()
+        key_points = citation_row.get("key_points", [])
+        claim_anchor = ""
+        if isinstance(key_points, list):
+            for point in key_points:
+                text = str(point or "").strip()
+                if text:
+                    claim_anchor = text.rstrip(".")
+                    break
+
+        subject = slide_objective or claim_anchor or slide_title or "the slide's main point"
+        subject = re.sub(r"\s+", " ", subject).strip()
+        if len(subject) > 120:
+            subject = subject[:117].rstrip() + "..."
+
+        if purpose == "source_of_claim":
+            return f"supports the claim that {subject}"
+        if purpose == "method_background":
+            return f"provides method background for {subject}"
+        if purpose == "attribution":
+            return f"attributes source details related to {subject}"
+        return f"provides context for {subject}"
 
     @staticmethod
     def _prepare_asset_for_html(*, resolved_asset: str, output_dir: Path, assets_dir: Path) -> str:

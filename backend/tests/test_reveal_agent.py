@@ -463,8 +463,8 @@ class RevealAgentSmokeTest(unittest.TestCase):
             html_content = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn("citation-chip", html_content)
             self.assertIn("Why cited", html_content)
-            self.assertIn("supports a claim from the source paper", html_content)
-            self.assertIn("provides method background", html_content)
+            self.assertIn("supports the claim that Obj", html_content)
+            self.assertIn("provides method background for Obj", html_content)
 
 
 if __name__ == "__main__":
