@@ -1,0 +1,235 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "section_analysis.schema.json",
+	"title": "Section Analysis",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"section_id",
+		"section_title",
+		"section_role",
+		"summary",
+		"key_claims",
+		"important_details",
+		"concepts_needing_explanation",
+		"evidence_or_arguments",
+		"limitations_or_cautions",
+		"candidate_visualizable_ideas",
+		"presentation_relevance",
+		"uncertainty_flags",
+		"confidence"
+	],
+	"properties": {
+		"section_id": {
+			"type": "string",
+			"minLength": 1
+		},
+		"section_title": {
+			"type": "string"
+		},
+		"section_role": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"enum": [
+					"framing_background",
+					"problem_definition",
+					"method_explanation",
+					"experiment_result_interpretation",
+					"limitations_discussion",
+					"conclusion_takeaways"
+				]
+			},
+			"minItems": 1,
+			"uniqueItems": true
+		},
+		"summary": {
+			"type": "string"
+		},
+		"key_claims": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"claim",
+					"support_level_within_section",
+					"notes"
+				],
+				"properties": {
+					"claim": {
+						"type": "string"
+					},
+					"support_level_within_section": {
+						"type": "string",
+						"enum": [
+							"strong",
+							"moderate",
+							"weak"
+						]
+					},
+					"notes": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"important_details": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"concepts_needing_explanation": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"concept",
+					"reason",
+					"importance"
+				],
+				"properties": {
+					"concept": {
+						"type": "string"
+					},
+					"reason": {
+						"type": "string",
+						"enum": [
+							"jargon",
+							"prerequisite",
+							"non-intuitive mechanism",
+							"dense wording"
+						]
+					},
+					"importance": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					}
+				}
+			}
+		},
+		"evidence_or_arguments": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"type",
+					"description"
+				],
+				"properties": {
+					"type": {
+						"type": "string",
+						"enum": [
+							"experiment",
+							"reasoning",
+							"comparison",
+							"ablation",
+							"theoretical_argument",
+							"dataset_description",
+							"other"
+						]
+					},
+					"description": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"limitations_or_cautions": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"candidate_visualizable_ideas": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"idea",
+					"visual_type_hint",
+					"source_support"
+				],
+				"properties": {
+					"idea": {
+						"type": "string"
+					},
+					"visual_type_hint": {
+						"type": "string",
+						"enum": [
+							"process_diagram",
+							"comparison_table",
+							"flow",
+							"conceptual_figure",
+							"timeline",
+							"other"
+						]
+					},
+					"source_support": {
+						"type": "string",
+						"enum": [
+							"direct",
+							"inferred_from_section_structure"
+						]
+					}
+				}
+			}
+		},
+		"presentation_relevance": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"importance_for_final_deck",
+				"why_it_matters",
+				"likely_slide_use"
+			],
+			"properties": {
+				"importance_for_final_deck": {
+					"type": "string",
+					"enum": [
+						"high",
+						"medium",
+						"low"
+					]
+				},
+				"why_it_matters": {
+					"type": "string"
+				},
+				"likely_slide_use": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"main_content",
+							"supporting_context"
+						]
+					},
+					"minItems": 1,
+					"uniqueItems": true
+				}
+			}
+		},
+		"uncertainty_flags": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"confidence": {
+			"type": "string",
+			"enum": [
+				"high",
+				"medium",
+				"low"
+			]
+		}
+	}
+}

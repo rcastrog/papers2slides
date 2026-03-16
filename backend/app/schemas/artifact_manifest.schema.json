@@ -1,0 +1,190 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "artifact_manifest.schema.json",
+	"title": "Artifact Manifest",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"artifacts",
+		"summary"
+	],
+	"properties": {
+		"artifacts": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"artifact_id",
+					"artifact_label",
+					"artifact_type",
+					"page_numbers",
+					"section_id",
+					"caption",
+					"nearby_context_summary",
+					"file_path",
+					"extraction_quality",
+					"readability_for_presentation",
+					"core_message",
+					"presentation_value",
+					"recommended_action",
+					"recommendation_rationale",
+					"must_preserve_if_adapted",
+					"distortion_risk",
+					"ambiguities",
+					"notes"
+				],
+				"properties": {
+					"artifact_id": {
+						"type": "string",
+						"minLength": 1
+					},
+					"artifact_label": {
+						"type": "string"
+					},
+					"artifact_type": {
+						"type": "string",
+						"enum": [
+							"figure",
+							"plot",
+							"chart",
+							"table",
+							"diagram",
+							"equation",
+							"composite",
+							"other"
+						]
+					},
+					"page_numbers": {
+						"type": "array",
+						"items": {
+							"type": "integer",
+							"minimum": 1
+						},
+						"minItems": 1,
+						"uniqueItems": true
+					},
+					"section_id": {
+						"type": "string"
+					},
+					"caption": {
+						"type": "string"
+					},
+					"nearby_context_summary": {
+						"type": "string"
+					},
+					"file_path": {
+						"type": "string"
+					},
+					"extraction_quality": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					},
+					"readability_for_presentation": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					},
+					"core_message": {
+						"type": "string"
+					},
+					"presentation_value": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					},
+					"recommended_action": {
+						"type": "string",
+						"enum": [
+							"reuse_directly",
+							"crop_or_clean",
+							"recreate_carefully",
+							"replace_with_conceptual_visual",
+							"avoid_using"
+						]
+					},
+					"recommendation_rationale": {
+						"type": "string"
+					},
+					"must_preserve_if_adapted": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"distortion_risk": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					},
+					"ambiguities": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"notes": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"summary": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"artifact_count",
+				"high_value_artifact_ids",
+				"high_risk_artifact_ids",
+				"equation_artifact_ids",
+				"warnings"
+			],
+			"properties": {
+				"artifact_count": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"high_value_artifact_ids": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"high_risk_artifact_ids": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"equation_artifact_ids": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"warnings": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		}
+	}
+}

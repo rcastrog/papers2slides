@@ -1,0 +1,75 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "speaker_notes.schema.json",
+	"title": "Speaker Notes",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"deck_language",
+		"notes_style",
+		"slide_notes",
+		"global_notes_warnings"
+	],
+	"properties": {
+		"deck_language": {
+			"type": "string",
+			"enum": [
+				"en",
+				"es"
+			]
+		},
+		"notes_style": {
+			"type": "string",
+			"enum": [
+				"brief_talking_points"
+			]
+		},
+		"slide_notes": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"slide_number",
+					"slide_title",
+					"talking_points",
+					"timing_hint_seconds",
+					"caution_notes"
+				],
+				"properties": {
+					"slide_number": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"slide_title": {
+						"type": "string"
+					},
+					"talking_points": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						},
+						"minItems": 1
+					},
+					"timing_hint_seconds": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"caution_notes": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"global_notes_warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}

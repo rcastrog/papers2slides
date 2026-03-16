@@ -1,0 +1,301 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "presentation_plan.schema.json",
+	"title": "Presentation Plan",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"deck_metadata",
+		"narrative_arc",
+		"slides",
+		"global_warnings",
+		"plan_confidence"
+	],
+	"properties": {
+		"deck_metadata": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"title",
+				"subtitle",
+				"language",
+				"presentation_style",
+				"target_audience",
+				"target_duration_minutes",
+				"target_slide_count"
+			],
+			"properties": {
+				"title": {
+					"type": "string"
+				},
+				"subtitle": {
+					"type": "string"
+				},
+				"language": {
+					"type": "string",
+					"enum": [
+						"en",
+						"es"
+					]
+				},
+				"presentation_style": {
+					"type": "string",
+					"enum": [
+						"journal_club",
+						"teaching",
+						"executive_friendly",
+						"technical_summary"
+					]
+				},
+				"target_audience": {
+					"type": "string",
+					"enum": [
+						"research_specialists",
+						"technical_adjacent",
+						"students",
+						"executive_nontechnical"
+					]
+				},
+				"target_duration_minutes": {
+					"type": "integer",
+					"minimum": 1
+				},
+				"target_slide_count": {
+					"type": "integer",
+					"minimum": 1
+				}
+			}
+		},
+		"narrative_arc": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"overall_story",
+				"audience_adaptation_notes",
+				"language_adaptation_notes"
+			],
+			"properties": {
+				"overall_story": {
+					"type": "string"
+				},
+				"audience_adaptation_notes": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"language_adaptation_notes": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"slides": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"slide_number",
+					"slide_role",
+					"title",
+					"objective",
+					"key_points",
+					"must_avoid",
+					"visuals",
+					"source_support",
+					"citations",
+					"speaker_note_hooks",
+					"confidence_notes",
+					"layout_hint"
+				],
+				"properties": {
+					"slide_number": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"slide_role": {
+						"type": "string",
+						"enum": [
+							"title",
+							"motivation",
+							"problem",
+							"contribution",
+							"method",
+							"result",
+							"discussion",
+							"limitation",
+							"conclusion",
+							"appendix_like_support"
+						]
+					},
+					"title": {
+						"type": "string"
+					},
+					"objective": {
+						"type": "string"
+					},
+					"key_points": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"must_avoid": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"visuals": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"visual_type",
+								"asset_id",
+								"source_origin",
+								"usage_mode",
+								"placement_hint",
+								"why_this_visual"
+							],
+							"properties": {
+								"visual_type": {
+									"type": "string",
+									"enum": [
+										"source_figure",
+										"source_table",
+										"source_chart",
+										"source_diagram",
+										"generated_conceptual",
+										"text_only",
+										"other"
+									]
+								},
+								"asset_id": {
+									"type": "string"
+								},
+								"source_origin": {
+									"type": "string",
+									"enum": [
+										"source_paper",
+										"reference_paper",
+										"generated",
+										"none"
+									]
+								},
+								"usage_mode": {
+									"type": "string",
+									"enum": [
+										"reuse",
+										"adapted",
+										"conceptual",
+										"none"
+									]
+								},
+								"placement_hint": {
+									"type": "string",
+									"enum": [
+										"full_bleed",
+										"left_visual_right_text",
+										"right_visual_left_text",
+										"two_column",
+										"center_focus",
+										"other"
+									]
+								},
+								"why_this_visual": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"source_support": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"support_type",
+								"support_id",
+								"support_note"
+							],
+							"properties": {
+								"support_type": {
+									"type": "string",
+									"enum": [
+										"source_section",
+										"source_artifact",
+										"reference_summary"
+									]
+								},
+								"support_id": {
+									"type": "string"
+								},
+								"support_note": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"citations": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"short_citation",
+								"source_kind"
+							],
+							"properties": {
+								"short_citation": {
+									"type": "string"
+								},
+								"source_kind": {
+									"type": "string",
+									"enum": [
+										"source_paper",
+										"reference_paper"
+									]
+								}
+							}
+						}
+					},
+					"speaker_note_hooks": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"confidence_notes": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"layout_hint": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"global_warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"plan_confidence": {
+			"type": "string",
+			"enum": [
+				"high",
+				"medium",
+				"low"
+			]
+		}
+	}
+}

@@ -1,0 +1,202 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "run_manifest.schema.json",
+	"title": "Run Manifest",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"run_id",
+		"job_id",
+		"status",
+		"current_stage",
+		"completed_stages",
+		"blocked_stages",
+		"checkpoints",
+		"artifacts",
+		"counts",
+		"warnings",
+		"errors",
+		"recommended_next_step"
+	],
+	"properties": {
+		"run_id": {
+			"type": "string",
+			"minLength": 1
+		},
+		"job_id": {
+			"type": "string",
+			"minLength": 1
+		},
+		"status": {
+			"type": "string",
+			"enum": [
+				"queued",
+				"running",
+				"checkpoint_waiting",
+				"completed",
+				"completed_with_warnings",
+				"failed"
+			]
+		},
+		"current_stage": {
+			"type": "string"
+		},
+		"completed_stages": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"blocked_stages": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"checkpoints": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"name",
+					"status",
+					"bundle_path"
+				],
+				"properties": {
+					"name": {
+						"type": "string",
+						"enum": [
+							"parse_summary",
+							"presentation_plan",
+							"render_review",
+							"audit_review"
+						]
+					},
+					"status": {
+						"type": "string",
+						"enum": [
+							"pending",
+							"waiting_for_user",
+							"approved",
+							"rejected",
+							"skipped"
+						]
+					},
+					"bundle_path": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"artifacts": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"job_spec_path",
+				"source_parse_path",
+				"section_analysis_path",
+				"artifact_manifest_path",
+				"reference_index_path",
+				"reference_digest_path",
+				"presentation_plan_path",
+				"speaker_notes_path",
+				"generated_visuals_path",
+				"reveal_output_path",
+				"pptx_output_path",
+				"audit_report_path"
+			],
+			"properties": {
+				"job_spec_path": {
+					"type": "string"
+				},
+				"source_parse_path": {
+					"type": "string"
+				},
+				"section_analysis_path": {
+					"type": "string"
+				},
+				"artifact_manifest_path": {
+					"type": "string"
+				},
+				"reference_index_path": {
+					"type": "string"
+				},
+				"reference_digest_path": {
+					"type": "string"
+				},
+				"presentation_plan_path": {
+					"type": "string"
+				},
+				"speaker_notes_path": {
+					"type": "string"
+				},
+				"generated_visuals_path": {
+					"type": "string"
+				},
+				"reveal_output_path": {
+					"type": "string"
+				},
+				"pptx_output_path": {
+					"type": "string"
+				},
+				"audit_report_path": {
+					"type": "string"
+				}
+			}
+		},
+		"counts": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"sections",
+				"source_artifacts",
+				"references_total",
+				"references_retrieved",
+				"slides_planned",
+				"audit_findings"
+			],
+			"properties": {
+				"sections": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"source_artifacts": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"references_total": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"references_retrieved": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"slides_planned": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"audit_findings": {
+					"type": "integer",
+					"minimum": 0
+				}
+			}
+		},
+		"warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"errors": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"recommended_next_step": {
+			"type": "string"
+		}
+	}
+}

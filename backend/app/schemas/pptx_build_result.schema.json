@@ -1,0 +1,140 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "pptx_build_result.schema.json",
+	"title": "PPTX Build Result",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"build_status",
+		"output",
+		"slide_build_results",
+		"global_warnings",
+		"deviations"
+	],
+	"properties": {
+		"build_status": {
+			"type": "string",
+			"enum": [
+				"success",
+				"partial_success",
+				"failed"
+			]
+		},
+		"output": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"pptx_path",
+				"template_used",
+				"notes_insertion_supported"
+			],
+			"properties": {
+				"pptx_path": {
+					"type": "string"
+				},
+				"template_used": {
+					"type": "string"
+				},
+				"notes_insertion_supported": {
+					"type": "boolean"
+				}
+			}
+		},
+		"slide_build_results": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"slide_number",
+					"title",
+					"status",
+					"assets_used",
+					"notes_inserted",
+					"citations_inserted",
+					"warnings"
+				],
+				"properties": {
+					"slide_number": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"title": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string",
+						"enum": [
+							"built",
+							"built_with_warning",
+							"failed"
+						]
+					},
+					"assets_used": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"asset_id",
+								"resolved_path"
+							],
+							"properties": {
+								"asset_id": {
+									"type": "string"
+								},
+								"resolved_path": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"notes_inserted": {
+						"type": "boolean"
+					},
+					"citations_inserted": {
+						"type": "boolean"
+					},
+					"warnings": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"global_warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"deviations": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"type",
+					"description"
+				],
+				"properties": {
+					"type": {
+						"type": "string",
+						"enum": [
+							"missing_asset",
+							"pptx_layout_approximation",
+							"note_insertion_issue",
+							"citation_issue",
+							"other"
+						]
+					},
+					"description": {
+						"type": "string"
+					}
+				}
+			}
+		}
+	}
+}

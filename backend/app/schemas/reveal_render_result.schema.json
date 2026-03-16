@@ -1,0 +1,156 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "reveal_render_result.schema.json",
+	"title": "Reveal Render Result",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"render_status",
+		"output",
+		"slide_render_results",
+		"global_warnings",
+		"deviations"
+	],
+	"properties": {
+		"render_status": {
+			"type": "string",
+			"enum": [
+				"success",
+				"partial_success",
+				"failed"
+			]
+		},
+		"output": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"reveal_root_path",
+				"entry_html_path",
+				"assets_directory",
+				"theme_name"
+			],
+			"properties": {
+				"reveal_root_path": {
+					"type": "string"
+				},
+				"entry_html_path": {
+					"type": "string"
+				},
+				"assets_directory": {
+					"type": "string"
+				},
+				"theme_name": {
+					"type": "string"
+				}
+			}
+		},
+		"slide_render_results": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"slide_number",
+					"title",
+					"status",
+					"assets_used",
+					"citations_rendered",
+					"notes_attached",
+					"warnings"
+				],
+				"properties": {
+					"slide_number": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"title": {
+						"type": "string"
+					},
+					"status": {
+						"type": "string",
+						"enum": [
+							"rendered",
+							"rendered_with_warning",
+							"failed"
+						]
+					},
+					"assets_used": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"asset_id",
+								"resolved_path",
+								"source_origin"
+							],
+							"properties": {
+								"asset_id": {
+									"type": "string"
+								},
+								"resolved_path": {
+									"type": "string"
+								},
+								"source_origin": {
+									"type": "string",
+									"enum": [
+										"source_paper",
+										"reference_paper",
+										"generated"
+									]
+								}
+							}
+						}
+					},
+					"citations_rendered": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"notes_attached": {
+						"type": "boolean"
+					},
+					"warnings": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"global_warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"deviations": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"type",
+					"description"
+				],
+				"properties": {
+					"type": {
+						"type": "string",
+						"enum": [
+							"missing_asset",
+							"layout_constraint",
+							"citation_truncation",
+							"note_attachment_issue",
+							"other"
+						]
+					},
+					"description": {
+						"type": "string"
+					}
+				}
+			}
+		}
+	}
+}

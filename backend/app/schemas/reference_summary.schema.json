@@ -1,0 +1,193 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "reference_summary.schema.json",
+	"title": "Reference Light Summary",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"reference_id",
+		"reference_title",
+		"summary",
+		"relation_to_source_paper",
+		"useful_points_for_main_presentation",
+		"possible_useful_artifacts",
+		"mention_recommendation",
+		"warnings",
+		"confidence"
+	],
+	"properties": {
+		"reference_id": {
+			"type": "string",
+			"minLength": 1
+		},
+		"reference_title": {
+			"type": "string"
+		},
+		"summary": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"main_topic",
+				"main_contribution",
+				"brief_summary"
+			],
+			"properties": {
+				"main_topic": {
+					"type": "string"
+				},
+				"main_contribution": {
+					"type": "string"
+				},
+				"brief_summary": {
+					"type": "string"
+				}
+			}
+		},
+		"relation_to_source_paper": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"relation_type",
+				"description",
+				"importance_for_source_presentation"
+			],
+			"properties": {
+				"relation_type": {
+					"type": "array",
+					"items": {
+						"type": "string",
+						"enum": [
+							"background_context",
+							"method_ancestry",
+							"benchmark_dataset_context",
+							"comparison_baseline_interpretation",
+							"supporting_evidence",
+							"limitation_or_contrast"
+						]
+					},
+					"minItems": 1,
+					"uniqueItems": true
+				},
+				"description": {
+					"type": "string"
+				},
+				"importance_for_source_presentation": {
+					"type": "string",
+					"enum": [
+						"high",
+						"medium",
+						"low"
+					]
+				}
+			}
+		},
+		"useful_points_for_main_presentation": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"point",
+					"usage_type",
+					"support_strength"
+				],
+				"properties": {
+					"point": {
+						"type": "string"
+					},
+					"usage_type": {
+						"type": "string",
+						"enum": [
+							"background",
+							"comparison",
+							"method_context",
+							"result_context",
+							"limitation_context",
+							"other"
+						]
+					},
+					"support_strength": {
+						"type": "string",
+						"enum": [
+							"strong",
+							"moderate",
+							"weak"
+						]
+					}
+				}
+			}
+		},
+		"possible_useful_artifacts": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"artifact_hint",
+					"artifact_type",
+					"why_it_might_help"
+				],
+				"properties": {
+					"artifact_hint": {
+						"type": "string"
+					},
+					"artifact_type": {
+						"type": "string",
+						"enum": [
+							"figure",
+							"plot",
+							"chart",
+							"table",
+							"diagram",
+							"equation",
+							"other"
+						]
+					},
+					"why_it_might_help": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"mention_recommendation": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"should_mention_in_final_deck",
+				"recommended_scope",
+				"rationale"
+			],
+			"properties": {
+				"should_mention_in_final_deck": {
+					"type": "boolean"
+				},
+				"recommended_scope": {
+					"type": "string",
+					"enum": [
+						"none",
+						"passing_mention",
+						"one_bullet_context",
+						"one_supporting_slide_note"
+					]
+				},
+				"rationale": {
+					"type": "string"
+				}
+			}
+		},
+		"warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"confidence": {
+			"type": "string",
+			"enum": [
+				"high",
+				"medium",
+				"low"
+			]
+		}
+	}
+}

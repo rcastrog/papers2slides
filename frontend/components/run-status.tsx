@@ -1,0 +1,162 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
+
+import { cancelRun, getRunStatus, recoverRunA11, type RunStatusResponse } from "../lib/api";
+import { formatStageLabel } from "../lib/stage-names";
+
+type RunStatusProps = {
+  runId: string;
+};
+
+export function RunStatus({ runId }: RunStatusProps) {
+  const [status, setStatus] = useState<RunStatusResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isRecovering, setIsRecovering] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const nextStatus = await getRunStatus(runId);
+        if (!cancelled) {
+          setStatus(nextStatus);
+          setError(null);
+        }
+      } catch (pollError) {
+        if (!cancelled) {
+          const message = pollError instanceof Error ? pollError.message : "Failed to load run status";
+          setError(message);
+        }
+      }
+    }
+
+    poll();
+    const timer = setInterval(poll, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [runId]);
+
+  const isCompleted = useMemo(() => {
+    if (!status) return false;
+    return status.status === "completed" || status.status === "completed_with_warnings";
+  }, [status]);
+
+  const isTerminal = useMemo(() => {
+    if (!status) return false;
+    return ["completed", "completed_with_warnings", "failed", "cancelled"].includes(status.status);
+  }, [status]);
+
+  const canCancel = useMemo(() => {
+    if (!status) return false;
+    return ["queued", "running", "cancel_requested"].includes(status.status);
+  }, [status]);
+
+  const canRecoverA11 = useMemo(() => {
+    if (!status) return false;
+    return status.status === "failed" && status.current_stage === "A11";
+  }, [status]);
+
+  async function handleCancel() {
+    setIsCancelling(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const result = await cancelRun(runId);
+      setActionMessage(result.message || `Run status: ${result.status}`);
+      const refreshed = await getRunStatus(runId);
+      setStatus(refreshed);
+    } catch (cancelError) {
+      const message = cancelError instanceof Error ? cancelError.message : "Failed to cancel run";
+      setError(message);
+    } finally {
+      setIsCancelling(false);
+    }
+  }
+
+  async function handleRecoverA11() {
+    setIsRecovering(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const result = await recoverRunA11(runId);
+      setActionMessage(`A11 recovery completed: ${result.status}`);
+      const refreshed = await getRunStatus(runId);
+      setStatus(refreshed);
+    } catch (recoverError) {
+      const message = recoverError instanceof Error ? recoverError.message : "Failed to recover run";
+      setError(message);
+    } finally {
+      setIsRecovering(false);
+    }
+  }
+
+  const summary = status?.job_summary;
+
+  return (
+    <div className="card stack">
+      <h2 style={{ margin: 0 }}>Run status</h2>
+
+      <div className="status-grid">
+        <div>Run ID: {runId}</div>
+        <div>Status: {status?.status ?? "loading"}</div>
+        <div>Current stage: {status?.current_stage ? formatStageLabel(status.current_stage) : "unknown"}</div>
+        <div>
+        Completed stages: {status?.completed_stages?.length ? status.completed_stages.map((stageId) => formatStageLabel(stageId)).join(", ") : "none"}
+        </div>
+        <div>Recorded stages: {status?.stage_count ?? 0}</div>
+        <div>Fallback stages: {status?.fallback_stage_count ?? 0}</div>
+        <div>Total duration: {status?.total_duration_ms != null ? `${status.total_duration_ms} ms` : "n/a"}</div>
+        <div>Warnings count: {status?.warning_count ?? 0}</div>
+        <div>Audit findings count: {status?.audit_findings_count ?? "n/a"}</div>
+      </div>
+
+      {summary && Object.keys(summary).length > 0 ? (
+        <div className="panel stack">
+          <h3 className="section-title">Job Summary</h3>
+          <div className="status-grid">
+            <div>Style: {String(summary.presentation_style ?? "n/a")}</div>
+            <div>Audience: {String(summary.target_audience ?? "n/a")}</div>
+            <div>Language: {String(summary.language ?? "n/a")}</div>
+            <div>Target slides: {String(summary.target_slide_count ?? "n/a")}</div>
+            <div>Target duration: {String(summary.target_duration_minutes ?? "n/a")} min</div>
+            <div>Repair on audit: {String(Boolean(summary.repair_on_audit))}</div>
+          </div>
+        </div>
+      ) : null}
+
+      {!isTerminal ? <div className="muted">Polling every 3s until completion...</div> : null}
+
+      <div className="top-links">
+        {canCancel ? (
+          <button className="btn-secondary" type="button" disabled={isCancelling} onClick={handleCancel}>
+            {isCancelling ? "Requesting cancel..." : "Stop run"}
+          </button>
+        ) : null}
+        {canRecoverA11 ? (
+          <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
+            {isRecovering ? "Recovering..." : "Recover from A11"}
+          </button>
+        ) : null}
+      </div>
+
+      {actionMessage ? <div className="success">{actionMessage}</div> : null}
+
+      {error ? <div className="error">{error}</div> : null}
+
+      {isCompleted ? (
+        <div className="top-links">
+          <Link href={`/results/${runId}`}>View results</Link>
+          <Link href={`/inspect/${runId}`}>Inspect run</Link>
+        </div>
+      ) : null}
+    </div>
+  );
+}

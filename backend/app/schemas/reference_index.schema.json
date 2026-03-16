@@ -1,0 +1,213 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "reference_index.schema.json",
+	"title": "Reference Index",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"reference_index",
+		"retrieval_summary"
+	],
+	"properties": {
+		"reference_index": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"reference_id",
+					"original_reference_text",
+					"parsed_reference",
+					"parsing_confidence",
+					"retrieval_status",
+					"matched_record",
+					"match_confidence",
+					"alternative_candidates",
+					"failure_reason",
+					"notes"
+				],
+				"properties": {
+					"reference_id": {
+						"type": "string",
+						"minLength": 1
+					},
+					"original_reference_text": {
+						"type": "string"
+					},
+					"parsed_reference": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"title",
+							"authors",
+							"venue_or_source",
+							"year",
+							"arxiv_id",
+							"doi"
+						],
+						"properties": {
+							"title": {
+								"type": "string"
+							},
+							"authors": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"venue_or_source": {
+								"type": "string"
+							},
+							"year": {
+								"type": "string"
+							},
+							"arxiv_id": {
+								"type": "string"
+							},
+							"doi": {
+								"type": "string"
+							}
+						}
+					},
+					"parsing_confidence": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					},
+					"retrieval_status": {
+						"type": "string",
+						"enum": [
+							"retrieved",
+							"ambiguous_match",
+							"not_found",
+							"skipped"
+						]
+					},
+					"matched_record": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"title",
+							"authors",
+							"year",
+							"source",
+							"url",
+							"pdf_path",
+							"reference_folder_path"
+						],
+						"properties": {
+							"title": {
+								"type": "string"
+							},
+							"authors": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"year": {
+								"type": "string"
+							},
+							"source": {
+								"type": "string",
+								"enum": [
+									"arxiv",
+									"doi",
+									"web",
+									"other"
+								]
+							},
+							"url": {
+								"type": "string"
+							},
+							"pdf_path": {
+								"type": "string"
+							},
+							"reference_folder_path": {
+								"type": "string"
+							}
+						}
+					},
+					"match_confidence": {
+						"type": "string",
+						"enum": [
+							"high",
+							"medium",
+							"low"
+						]
+					},
+					"alternative_candidates": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"title",
+								"year",
+								"reason_not_selected"
+							],
+							"properties": {
+								"title": {
+									"type": "string"
+								},
+								"year": {
+									"type": "string"
+								},
+								"reason_not_selected": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"failure_reason": {
+						"type": "string"
+					},
+					"notes": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					}
+				}
+			}
+		},
+		"retrieval_summary": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"total_references",
+				"retrieved_count",
+				"ambiguous_count",
+				"not_found_count",
+				"warnings"
+			],
+			"properties": {
+				"total_references": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"retrieved_count": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"ambiguous_count": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"not_found_count": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"warnings": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		}
+	}
+}

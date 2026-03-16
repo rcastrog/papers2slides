@@ -1,0 +1,10 @@
+pydantic
+pytest
+pypdf
+arxiv
+python-pptx
+fastapi
+uvicorn
+python-multipart
+openai
+azure-identity

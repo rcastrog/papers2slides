@@ -1,0 +1,169 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "generated_visuals.schema.json",
+	"title": "Generated Visual Specifications",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"generated_visuals",
+		"global_visual_warnings"
+	],
+	"properties": {
+		"generated_visuals": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"visual_id",
+					"slide_number",
+					"slide_title",
+					"visual_purpose",
+					"visual_kind",
+					"status",
+					"conceptual_basis",
+					"provenance_label",
+					"must_preserve_if_adapted",
+					"visual_spec",
+					"safety_notes",
+					"image_generation_prompt"
+				],
+				"properties": {
+					"visual_id": {
+						"type": "string",
+						"minLength": 1
+					},
+					"slide_number": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"slide_title": {
+						"type": "string"
+					},
+					"visual_purpose": {
+						"type": "string"
+					},
+					"visual_kind": {
+						"type": "string",
+						"enum": [
+							"process_diagram",
+							"concept_map",
+							"workflow",
+							"architecture_simplification",
+							"timeline",
+							"comparison_framework",
+							"mechanism_illustration",
+							"other"
+						]
+					},
+					"status": {
+						"type": "string",
+						"enum": [
+							"recommended",
+							"optional",
+							"not_needed"
+						]
+					},
+					"conceptual_basis": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"grounded_in_source_sections",
+							"grounded_in_source_artifacts",
+							"grounded_in_reference_ids"
+						],
+						"properties": {
+							"grounded_in_source_sections": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"grounded_in_source_artifacts": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"grounded_in_reference_ids": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"provenance_label": {
+						"type": "string",
+						"enum": [
+							"conceptual",
+							"adapted_from_source"
+						]
+					},
+					"must_preserve_if_adapted": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"visual_spec": {
+						"type": "object",
+						"additionalProperties": false,
+						"required": [
+							"composition",
+							"main_elements",
+							"labels_or_text",
+							"style_notes",
+							"language"
+						],
+						"properties": {
+							"composition": {
+								"type": "string"
+							},
+							"main_elements": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"labels_or_text": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"style_notes": {
+								"type": "array",
+								"items": {
+									"type": "string"
+								}
+							},
+							"language": {
+								"type": "string",
+								"enum": [
+									"en",
+									"es"
+								]
+							}
+						}
+					},
+					"safety_notes": {
+						"type": "array",
+						"items": {
+							"type": "string"
+						}
+					},
+					"image_generation_prompt": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"global_visual_warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}

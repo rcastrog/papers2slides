@@ -1,0 +1,223 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "audit_report.schema.json",
+	"title": "Audit Report",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"audit_status",
+		"deck_risk_level",
+		"slide_audits",
+		"deck_level_findings",
+		"repair_priority",
+		"global_warnings"
+	],
+	"properties": {
+		"audit_status": {
+			"type": "string",
+			"enum": [
+				"completed",
+				"completed_with_warnings",
+				"failed"
+			]
+		},
+		"deck_risk_level": {
+			"type": "string",
+			"enum": [
+				"low",
+				"medium",
+				"high"
+			]
+		},
+		"slide_audits": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"slide_number",
+					"slide_title",
+					"overall_support",
+					"findings",
+					"required_action"
+				],
+				"properties": {
+					"slide_number": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"slide_title": {
+						"type": "string"
+					},
+					"overall_support": {
+						"type": "string",
+						"enum": [
+							"supported",
+							"weakly_supported",
+							"unsupported"
+						]
+					},
+					"findings": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"additionalProperties": false,
+							"required": [
+								"severity",
+								"category",
+								"description",
+								"evidence_basis",
+								"recommended_fix"
+							],
+							"properties": {
+								"severity": {
+									"type": "string",
+									"enum": [
+										"low",
+										"medium",
+										"high"
+									]
+								},
+								"category": {
+									"type": "string",
+									"enum": [
+										"unsupported_claim",
+										"overclaim",
+										"artifact_distortion_risk",
+										"generated_visual_overreach",
+										"citation_issue",
+										"translation_drift",
+										"notes_issue",
+										"omitted_limitation",
+										"provenance_issue",
+										"other"
+									]
+								},
+								"description": {
+									"type": "string"
+								},
+								"evidence_basis": {
+									"type": "array",
+									"items": {
+										"type": "object",
+										"additionalProperties": false,
+										"required": [
+											"source_type",
+											"source_id",
+											"note"
+										],
+										"properties": {
+											"source_type": {
+												"type": "string",
+												"enum": [
+													"source_section",
+													"source_artifact",
+													"reference_summary",
+													"presentation_plan",
+													"speaker_notes",
+													"render_output"
+												]
+											},
+											"source_id": {
+												"type": "string"
+											},
+											"note": {
+												"type": "string"
+											}
+										}
+									}
+								},
+								"recommended_fix": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"required_action": {
+						"type": "string",
+						"enum": [
+							"none",
+							"revise_slide",
+							"revise_notes",
+							"revise_visual",
+							"remove_claim",
+							"add_citation",
+							"add_caveat"
+						]
+					}
+				}
+			}
+		},
+		"deck_level_findings": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"severity",
+					"category",
+					"description",
+					"recommended_fix"
+				],
+				"properties": {
+					"severity": {
+						"type": "string",
+						"enum": [
+							"low",
+							"medium",
+							"high"
+						]
+					},
+					"category": {
+						"type": "string",
+						"enum": [
+							"systemic_overclaiming",
+							"insufficient_limitations",
+							"weak_reference_use",
+							"translation_quality",
+							"provenance_consistency",
+							"other"
+						]
+					},
+					"description": {
+						"type": "string"
+					},
+					"recommended_fix": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"repair_priority": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"priority_order",
+					"slide_number",
+					"reason"
+				],
+				"properties": {
+					"priority_order": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"slide_number": {
+						"type": "integer",
+						"minimum": 0
+					},
+					"reason": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"global_warnings": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}

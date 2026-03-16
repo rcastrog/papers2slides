@@ -1,0 +1,132 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "ui_job_request.schema.json",
+	"title": "UI Job Request",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"source_type",
+		"source_value",
+		"presentation_style",
+		"target_audience",
+		"language",
+		"output_formats",
+		"target_duration_minutes",
+		"target_slide_count",
+		"automation_mode",
+		"approval_checkpoints_enabled",
+		"checkpoints",
+		"reference_mode",
+		"visual_policy",
+		"equation_policy",
+		"user_notes"
+	],
+	"properties": {
+		"source_type": {
+			"type": "string",
+			"enum": [
+				"pdf_upload",
+				"url"
+			]
+		},
+		"source_value": {
+			"type": "string",
+			"minLength": 1
+		},
+		"presentation_style": {
+			"type": "string",
+			"enum": [
+				"journal_club",
+				"teaching",
+				"executive_friendly",
+				"technical_summary"
+			]
+		},
+		"target_audience": {
+			"type": "string",
+			"enum": [
+				"research_specialists",
+				"technical_adjacent",
+				"students",
+				"executive_nontechnical"
+			]
+		},
+		"language": {
+			"type": "string",
+			"enum": [
+				"en",
+				"es"
+			]
+		},
+		"output_formats": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"enum": [
+					"reveal",
+					"pptx"
+				]
+			},
+			"minItems": 1,
+			"uniqueItems": true
+		},
+		"target_duration_minutes": {
+			"type": "integer",
+			"minimum": 1
+		},
+		"target_slide_count": {
+			"type": "integer",
+			"minimum": 1
+		},
+		"automation_mode": {
+			"type": "string",
+			"enum": [
+				"end_to_end",
+				"checkpointed"
+			]
+		},
+		"approval_checkpoints_enabled": {
+			"type": "boolean"
+		},
+		"checkpoints": {
+			"type": "array",
+			"items": {
+				"type": "string",
+				"enum": [
+					"parse_summary",
+					"presentation_plan",
+					"render_review",
+					"audit_review"
+				]
+			},
+			"uniqueItems": true
+		},
+		"reference_mode": {
+			"type": "string",
+			"enum": [
+				"retrieve_all_light_summarize"
+			]
+		},
+		"visual_policy": {
+			"type": "string",
+			"enum": [
+				"conservative",
+				"balanced",
+				"enhanced"
+			]
+		},
+		"equation_policy": {
+			"type": "string",
+			"enum": [
+				"avoid_unless_essential",
+				"include_when_central"
+			]
+		},
+		"user_notes": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}

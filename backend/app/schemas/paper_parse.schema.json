@@ -1,0 +1,243 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "paper_parse.schema.json",
+	"title": "Paper Parse Package",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"source_status",
+		"metadata",
+		"section_index",
+		"full_text_path",
+		"bibliography",
+		"parse_quality"
+	],
+	"properties": {
+		"source_status": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"acquired",
+				"source_type",
+				"source_value",
+				"stored_pdf_path",
+				"notes"
+			],
+			"properties": {
+				"acquired": {
+					"type": "boolean"
+				},
+				"source_type": {
+					"type": "string",
+					"enum": [
+						"pdf_upload",
+						"local_pdf",
+						"url"
+					]
+				},
+				"source_value": {
+					"type": "string",
+					"minLength": 1
+				},
+				"stored_pdf_path": {
+					"type": "string",
+					"minLength": 1
+				},
+				"notes": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"metadata": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"title",
+				"authors",
+				"venue_or_source",
+				"year",
+				"abstract",
+				"keywords",
+				"metadata_confidence",
+				"inferred_fields"
+			],
+			"properties": {
+				"title": {
+					"type": "string"
+				},
+				"authors": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"venue_or_source": {
+					"type": "string"
+				},
+				"year": {
+					"type": "string"
+				},
+				"abstract": {
+					"type": "string"
+				},
+				"keywords": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"metadata_confidence": {
+					"type": "string",
+					"enum": [
+						"high",
+						"medium",
+						"low"
+					]
+				},
+				"inferred_fields": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"section_index": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": [
+					"section_id",
+					"section_title",
+					"section_level",
+					"page_start",
+					"page_end",
+					"order",
+					"is_inferred_boundary",
+					"text_path"
+				],
+				"properties": {
+					"section_id": {
+						"type": "string",
+						"minLength": 1
+					},
+					"section_title": {
+						"type": "string"
+					},
+					"section_level": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"page_start": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"page_end": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"order": {
+						"type": "integer",
+						"minimum": 1
+					},
+					"is_inferred_boundary": {
+						"type": "boolean"
+					},
+					"text_path": {
+						"type": "string",
+						"minLength": 1
+					}
+				}
+			}
+		},
+		"full_text_path": {
+			"type": "string",
+			"minLength": 1
+		},
+		"bibliography": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"detected",
+				"references_count",
+				"references_raw_path",
+				"extraction_confidence"
+			],
+			"properties": {
+				"detected": {
+					"type": "boolean"
+				},
+				"references_count": {
+					"type": "integer",
+					"minimum": 0
+				},
+				"references_raw_path": {
+					"type": "string",
+					"minLength": 1
+				},
+				"extraction_confidence": {
+					"type": "string",
+					"enum": [
+						"high",
+						"medium",
+						"low"
+					]
+				}
+			}
+		},
+		"parse_quality": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"ocr_used",
+				"missing_pages",
+				"garbled_regions",
+				"suspected_parsing_issues",
+				"warnings",
+				"overall_confidence"
+			],
+			"properties": {
+				"ocr_used": {
+					"type": "boolean"
+				},
+				"missing_pages": {
+					"type": "array",
+					"items": {
+						"type": "integer",
+						"minimum": 1
+					}
+				},
+				"garbled_regions": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"suspected_parsing_issues": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"warnings": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"overall_confidence": {
+					"type": "string",
+					"enum": [
+						"high",
+						"medium",
+						"low"
+					]
+				}
+			}
+		}
+	}
+}
