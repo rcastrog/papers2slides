@@ -127,24 +127,16 @@ def get_run_results(run_id: str) -> RunResultsResponse:
     run_path = _resolve_run_path(run_id)
 
     results = _load_json(run_path / "logs" / "results_summary.json")
-    if results is None:
-        workflow_summary = _load_json(run_path / "logs" / "workflow_summary.json")
-        if workflow_summary is None:
-            raise HTTPException(status_code=404, detail="Run results are not available")
+    workflow_summary = _load_json(run_path / "logs" / "workflow_summary.json")
+    if results is None and workflow_summary is None:
+        raise HTTPException(status_code=404, detail="Run results are not available")
 
-        final_paths = workflow_summary.get("final_output_paths_after_repair", {})
-        results = {
-            "run_id": run_id,
-            "reveal_path": final_paths.get("reveal_entry_html"),
-            "pptx_path": final_paths.get("pptx_path"),
-            "notes_path": str(run_path / "presentation" / "speaker_notes.json"),
-            "audit_report_path": workflow_summary.get("audit_report_path"),
-            "final_risk_summary": {
-                "deck_risk_level": workflow_summary.get("deck_risk_level_final"),
-                "unresolved_high_severity_findings_count": workflow_summary.get("unresolved_high_severity_findings_count", 0),
-            },
-            "asset_usage_summary": {},
-        }
+    results = _build_results_payload(
+        run_id=run_id,
+        run_path=run_path,
+        results=results,
+        workflow_summary=workflow_summary,
+    )
 
     if not isinstance(results.get("asset_usage_summary"), dict) or not results.get("asset_usage_summary"):
         inspector = RunInspector(run_path)
@@ -168,6 +160,66 @@ def get_run_results(run_id: str) -> RunResultsResponse:
         }
 
     return RunResultsResponse.model_validate(results)
+
+
+def _build_results_payload(
+    *,
+    run_id: str,
+    run_path: Path,
+    results: dict[str, Any] | None,
+    workflow_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Build a complete results payload, filling missing fields from workflow artifacts."""
+    payload = dict(results or {})
+    summary = dict(workflow_summary or {})
+    final_paths = summary.get("final_output_paths_after_repair", {})
+    if not isinstance(final_paths, dict):
+        final_paths = {}
+
+    payload["run_id"] = str(payload.get("run_id") or run_id)
+
+    if not payload.get("reveal_path"):
+        payload["reveal_path"] = final_paths.get("reveal_entry_html")
+    if not payload.get("pptx_path"):
+        payload["pptx_path"] = final_paths.get("pptx_path")
+
+    if not payload.get("reveal_path"):
+        reveal_candidate = run_path / "presentation" / "reveal" / "index.html"
+        if reveal_candidate.is_file():
+            payload["reveal_path"] = str(reveal_candidate)
+
+    if not payload.get("pptx_path"):
+        pptx_candidates = [
+            run_path / "presentation" / "pptx" / "deck.pptx",
+            run_path / "presentation" / "pptx_repaired" / "deck.pptx",
+            run_path / "output" / "presentation.pptx",
+        ]
+        for candidate in pptx_candidates:
+            if candidate.is_file():
+                payload["pptx_path"] = str(candidate)
+                break
+
+    if not payload.get("notes_path"):
+        notes_path = run_path / "presentation" / "speaker_notes.json"
+        payload["notes_path"] = str(notes_path) if notes_path.is_file() else None
+
+    if not payload.get("audit_report_path"):
+        payload["audit_report_path"] = summary.get("audit_report_path")
+
+    final_risk = payload.get("final_risk_summary")
+    if not isinstance(final_risk, dict):
+        final_risk = {}
+    if "deck_risk_level" not in final_risk:
+        final_risk["deck_risk_level"] = summary.get("deck_risk_level_final")
+    if "unresolved_high_severity_findings_count" not in final_risk:
+        final_risk["unresolved_high_severity_findings_count"] = summary.get("unresolved_high_severity_findings_count", 0)
+    payload["final_risk_summary"] = final_risk
+
+    asset_usage = payload.get("asset_usage_summary")
+    if not isinstance(asset_usage, dict):
+        payload["asset_usage_summary"] = {}
+
+    return payload
 
 
 @router.get("/runs/{run_id}/download/{artifact_name}")

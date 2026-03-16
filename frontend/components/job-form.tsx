@@ -109,20 +109,33 @@ export function JobForm() {
 
               <label className="field">
                 <span className="field-label">Presentation style</span>
-                <input
+                <select
                   value={presentationStyle}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) => setPresentationStyle(event.target.value)}
-                />
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) => setPresentationStyle(event.target.value)}
+                >
+                  <option value="journal_club">journal_club</option>
+                  <option value="teaching">teaching</option>
+                  <option value="executive_friendly">executive_friendly</option>
+                  <option value="technical_summary">technical_summary</option>
+                </select>
               </label>
 
               <label className="field">
                 <span className="field-label">Audience</span>
-                <input value={audience} onChange={(event: ChangeEvent<HTMLInputElement>) => setAudience(event.target.value)} />
+                <select value={audience} onChange={(event: ChangeEvent<HTMLSelectElement>) => setAudience(event.target.value)}>
+                  <option value="research_specialists">research_specialists</option>
+                  <option value="technical_adjacent">technical_adjacent</option>
+                  <option value="students">students</option>
+                  <option value="executive_nontechnical">executive_nontechnical</option>
+                </select>
               </label>
 
               <label className="field">
                 <span className="field-label">Language</span>
-                <input value={language} onChange={(event: ChangeEvent<HTMLInputElement>) => setLanguage(event.target.value)} />
+                <select value={language} onChange={(event: ChangeEvent<HTMLSelectElement>) => setLanguage(event.target.value)}>
+                  <option value="en">en</option>
+                  <option value="es">es</option>
+                </select>
               </label>
 
               <div className="field">
