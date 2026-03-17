@@ -155,6 +155,60 @@ class FakeTransportEmptyRelationType:
         return json.dumps(payload)
 
 
+class FakeTransportWrongSchemaThenCorrect:
+    """Returns planner-like JSON first, then a valid A5 payload on retry."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def complete(self, system_prompt: str, input_payload: dict, model: str | None = None) -> str:
+        _ = (system_prompt, input_payload, model)
+        self.call_count += 1
+        if self.call_count == 1:
+            return json.dumps(
+                {
+                    "deck_metadata": {
+                        "title": "Nowcasting",
+                        "subtitle": "Sub",
+                        "language": "es",
+                        "presentation_style": "journal_club",
+                        "target_audience": "research_specialists",
+                        "target_duration_minutes": 25,
+                        "target_slide_count": 15,
+                    },
+                    "narrative_arc": {"overall_story": "Story"},
+                    "slides": [],
+                    "global_warnings": [],
+                    "plan_confidence": "low",
+                }
+            )
+
+        payload = {
+            "reference_id": "R005",
+            "reference_title": "Recovered Reference",
+            "summary": {
+                "main_topic": "Recovered summary",
+                "main_contribution": "Schema-corrected on retry.",
+                "brief_summary": "Retry returned valid A5 structure.",
+            },
+            "relation_to_source_paper": {
+                "relation_type": ["background_context"],
+                "description": "Provides context.",
+                "importance_for_source_presentation": "low",
+            },
+            "useful_points_for_main_presentation": [],
+            "possible_useful_artifacts": [],
+            "mention_recommendation": {
+                "should_mention_in_final_deck": False,
+                "recommended_scope": "none",
+                "rationale": "Peripheral context only.",
+            },
+            "warnings": [],
+            "confidence": "low",
+        }
+        return json.dumps(payload)
+
+
 class ReferenceSummaryAgentSmokeTest(unittest.TestCase):
     def test_run_returns_validated_reference_summary(self) -> None:
         llm_client = LLMClient(transport=FakeTransport())
@@ -195,6 +249,17 @@ class ReferenceSummaryAgentSmokeTest(unittest.TestCase):
         result = agent.run({"reference_id": "R004"})
 
         self.assertEqual(result.relation_to_source_paper.relation_type, ["background_context"])
+
+    def test_run_retries_when_first_response_has_wrong_schema(self) -> None:
+        transport = FakeTransportWrongSchemaThenCorrect()
+        llm_client = LLMClient(transport=transport)
+        prompt_loader = PromptLoader(prompts_dir=PROJECT_ROOT / "backend" / "app" / "prompts")
+        agent = ReferenceSummaryAgent(llm_client=llm_client, prompt_loader=prompt_loader)
+
+        result = agent.run({"reference_id": "R005"})
+
+        self.assertEqual(result.reference_id, "R005")
+        self.assertEqual(transport.call_count, 2)
 
 
 if __name__ == "__main__":
