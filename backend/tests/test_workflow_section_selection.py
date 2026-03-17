@@ -1433,7 +1433,10 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
         added_slide = updated.slides[1]
         self.assertIn("Detalle de apoyo", added_slide.title)
         self.assertEqual(added_slide.citations[0].short_citation, "Articulo fuente")
-        self.assertTrue(any("evidencia adicional" in point.lower() for point in added_slide.key_points))
+        self.assertGreaterEqual(len(added_slide.key_points), 2)
+        self.assertTrue(all("the " not in point.lower() for point in added_slide.key_points))
+        self.assertTrue(all("observed exposure" not in point.lower() for point in added_slide.key_points))
+        self.assertTrue(all("esta diapositiva de apoyo conserva" not in point.lower() for point in added_slide.key_points))
         self.assertEqual(len(added_slide.key_points), len(set(added_slide.key_points)))
 
     def test_spanish_plan_localizes_english_key_points(self) -> None:
@@ -1511,7 +1514,49 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
 
         titles = [slide.title for slide in updated.slides]
         self.assertIn("Results: Supporting Detail", titles)
-        self.assertIn("Results: Supporting Detail (2)", titles)
+        self.assertNotIn("Results: Supporting Detail (2)", titles)
+
+    def test_backfill_skips_placeholder_only_support_content(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Mazo",
+                    "objective": "Abrir",
+                    "key_points": ["Titulo", "Autores", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                }
+            ],
+            target_count=4,
+            language="es",
+        )
+
+        sections = [
+            {
+                "section_id": "S41",
+                "section_title": "Results",
+                "section_role": ["experiment_result_interpretation"],
+                "key_claims": [],
+                "important_details": [],
+                "summary": "",
+                "why_it_matters": "",
+            }
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=4,
+        )
+
+        self.assertEqual(len(updated.slides), 1)
 
 
 if __name__ == "__main__":

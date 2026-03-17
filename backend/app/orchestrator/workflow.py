@@ -1608,6 +1608,9 @@ def _enforce_slide_density_and_target_count(
         if language == "es":
             key_points = [_localize_spanish_text_fragment(point, slide=slide) for point in key_points]
 
+        key_points = [point for point in key_points if not _is_low_value_support_line(point)]
+        key_points = _dedupe_preserve_order(key_points)
+
         if len(key_points) > max_points:
             key_points = key_points[:max_points]
 
@@ -1818,11 +1821,16 @@ def _build_supporting_slides_for_target(
         if isinstance(slide, dict)
     }
 
+    needed_support = max(0, target_slide_count - len(existing_slides))
+    max_support_slides = min(needed_support, len(curated_sections))
+    if max_support_slides <= 0:
+        return additional
+
     start_number = len(existing_slides) + 1
     cursor = 0
-    max_iterations = max(len(curated_sections) * max(target_slide_count, 1) * 4, 50)
+    max_iterations = max(len(curated_sections) * 3, 20)
     iterations = 0
-    while start_number + len(additional) <= target_slide_count:
+    while len(additional) < max_support_slides:
         iterations += 1
         if iterations > max_iterations:
             break
@@ -1846,33 +1854,27 @@ def _build_supporting_slides_for_target(
                 note_text = str(claim.get("notes", "")).strip()
                 if claim_text and note_text and note_text.lower() not in claim_text.lower():
                     combined = f"{claim_text} ({note_text})"
-                    if language != "es" or not _looks_predominantly_english(combined):
-                        key_points.append(combined)
+                    key_points.append(combined)
                 elif claim_text:
-                    if language != "es" or not _looks_predominantly_english(claim_text):
-                        key_points.append(claim_text)
+                    key_points.append(claim_text)
 
         for detail in section.get("important_details", [])[:2]:
             detail_text = str(detail).strip()
             if detail_text and detail_text not in key_points:
-                if language != "es" or not _looks_predominantly_english(detail_text):
-                    key_points.append(detail_text)
+                key_points.append(detail_text)
 
         if len(key_points) < 4:
             summary = str(section.get("summary", "")).strip()
             if summary and summary not in key_points:
-                if language != "es" or not _looks_predominantly_english(summary):
-                    key_points.append(summary)
+                key_points.append(summary)
 
         key_points = [
             _expand_sparse_key_point(item, {"objective": section.get("why_it_matters", "")}, language=language)
             for item in key_points[:6]
         ]
-        fallback_support_lines = _support_slide_fallback_lines(language=language)
-        fallback_cursor = 0
-        while len(key_points) < 4:
-            key_points.append(fallback_support_lines[fallback_cursor % len(fallback_support_lines)])
-            fallback_cursor += 1
+        key_points = _dedupe_preserve_order(key_points)
+        if len(key_points) < 2:
+            continue
 
         section_id = str(section.get("section_id", "")).strip() or f"s{start_number + len(additional)}"
         default_section_title = "Analisis de soporte" if language == "es" else "Supporting analysis"
@@ -1905,6 +1907,10 @@ def _build_supporting_slides_for_target(
         )
         if language == "es":
             key_points = [_localize_spanish_text_fragment(item, slide={"slide_role": slide_role, "objective": objective}) for item in key_points]
+        key_points = [item for item in key_points if not _is_low_value_support_line(item)]
+        key_points = _dedupe_preserve_order(key_points)
+        if len(key_points) < 2:
+            continue
         must_avoid = (
             ["No introducir afirmaciones no sustentadas por la seccion fuente."]
             if language == "es"
@@ -2099,6 +2105,29 @@ def _support_slide_fallback_lines(*, language: str) -> list[str]:
         "The content prioritizes traceability to results reported in the paper.",
         "These points are included to deepen discussion with documented support.",
     ]
+
+
+def _is_low_value_support_line(text: str) -> bool:
+    lowered = re.sub(r"\s+", " ", str(text or "").strip().lower())
+    if not lowered:
+        return True
+    placeholders = [
+        "esta diapositiva de apoyo conserva detalles tecnicos basados en la fuente para la discusion",
+        "this support slide preserves source-grounded detail for technical discussion",
+    ]
+    return any(item in lowered for item in placeholders)
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        key = re.sub(r"\s+", " ", str(value or "").strip().lower())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        ordered.append(str(value).strip())
+    return ordered
 
 
 def _default_spanish_title_for_role(*, role: str) -> str:
