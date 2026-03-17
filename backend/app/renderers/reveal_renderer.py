@@ -396,8 +396,6 @@ class RevealRenderer:
 
         subject = claim_anchor or slide_objective or slide_title or fallback_subject
         subject = re.sub(r"\s+", " ", subject).strip()
-        if len(subject) > 120:
-            subject = subject[:117].rstrip() + "..."
 
         variation_seed = f"{citation_text}|{slide_title}|{purpose}|{language}"
 

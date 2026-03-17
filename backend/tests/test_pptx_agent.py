@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,6 +21,7 @@ from app.models.generated_visuals import GeneratedVisuals
 from app.models.pptx_result import PPTXBuildResult
 from app.models.presentation_plan import PresentationPlan
 from app.models.speaker_notes import SpeakerNotes
+from app.renderers.pptx_renderer import PPTXRenderer
 from app.services.llm_client import LLMClient
 from app.services.prompt_loader import PromptLoader
 
@@ -27,12 +29,14 @@ from app.services.prompt_loader import PromptLoader
 class _FakeParagraph:
     def __init__(self) -> None:
         self.text = ""
+        self.font = type("_FakeFont", (), {"size": None})()
 
 
 class _FakeTextFrame:
     def __init__(self) -> None:
         self.paragraphs = [_FakeParagraph()]
         self.text = ""
+        self.word_wrap = False
 
     def clear(self) -> None:
         self.paragraphs = [_FakeParagraph()]
@@ -110,6 +114,11 @@ class _FakePresentation:
 
 
 class _FakePptxModule:
+    Presentation = _FakePresentation
+
+
+class _FakePptxModuleWithFile:
+    __file__ = "C:/fake/site-packages/pptx/__init__.py"
     Presentation = _FakePresentation
 
 
@@ -192,6 +201,76 @@ def _build_minimal_plan() -> PresentationPlan:
                     "speaker_note_hooks": [],
                     "confidence_notes": [],
                     "layout_hint": "default",
+                }
+            ],
+            "global_warnings": [],
+            "plan_confidence": "medium",
+        }
+    )
+
+
+def _build_plan_with_source_visual(asset_id: str) -> PresentationPlan:
+    return PresentationPlan.model_validate(
+        {
+            "deck_metadata": {
+                "title": "Test Deck",
+                "subtitle": "Sub",
+                "language": "en",
+                "presentation_style": "journal_club",
+                "target_audience": "research_specialists",
+                "target_duration_minutes": 20,
+                "target_slide_count": 12,
+            },
+            "narrative_arc": {
+                "overall_story": "Story",
+                "audience_adaptation_notes": [],
+                "language_adaptation_notes": [],
+            },
+            "slides": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "contribution",
+                    "title": "Slide 1",
+                    "objective": "Obj",
+                    "key_points": [
+                        "Point A",
+                        "Point B",
+                        "Point C",
+                        "Point D",
+                        "Point E",
+                        "Point F",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [
+                        {
+                            "visual_type": "source_figure",
+                            "asset_id": asset_id,
+                            "source_origin": "source_paper",
+                            "usage_mode": "reuse",
+                            "placement_hint": "left_visual_right_text",
+                            "why_this_visual": "Use source figure",
+                        }
+                    ],
+                    "source_support": [
+                        {
+                            "support_type": "source_artifact",
+                            "support_id": asset_id,
+                            "support_note": "source",
+                        }
+                    ],
+                    "citations": [
+                        {
+                            "short_citation": "Source A",
+                            "source_kind": "source_paper",
+                        },
+                        {
+                            "short_citation": "Source B",
+                            "source_kind": "reference_paper",
+                        },
+                    ],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "left_visual_right_text",
                 }
             ],
             "global_warnings": [],
@@ -380,6 +459,67 @@ class PPTXAgentSmokeTest(unittest.TestCase):
                 "generated:inline_conceptual_card",
             )
             self.assertEqual(build_result.slide_build_results[0].warnings, [])
+
+    def test_renderer_uses_planned_source_visual_when_generated_visuals_empty(self) -> None:
+        llm_client = LLMClient(transport=FakeTransport())
+        prompt_loader = PromptLoader(prompts_dir=PROJECT_ROOT / "backend" / "app" / "prompts")
+        agent = PPTXBuilderAgent(llm_client=llm_client, prompt_loader=prompt_loader)
+
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n"
+            b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\x0cIDAT"
+            b"\x08\x99c\xf8\xff\xff?\x00\x05\xfe\x02\xfe\xdc\xccY\xe7\x00"
+            b"\x00\x00\x00IEND\xaeB`\x82"
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_dir = Path(tmpdir)
+            output_path = temp_dir / "deck.pptx"
+            source_asset = temp_dir / "planned-source.png"
+            source_asset.write_bytes(png_bytes)
+
+            with patch("app.renderers.pptx_renderer.importlib.import_module", return_value=_FakePptxModule()):
+                build_result = agent.build(
+                    presentation_plan=_build_plan_with_source_visual("A_FIG_01"),
+                    speaker_notes=_build_minimal_notes(),
+                    generated_visuals=_build_minimal_visuals(),
+                    output_path=output_path,
+                    asset_map={"A_FIG_01": str(source_asset)},
+                )
+
+            self.assertTrue(output_path.is_file())
+            self.assertEqual(build_result.build_status, "success")
+            self.assertEqual(build_result.slide_build_results[0].assets_used[0].resolved_path, str(source_asset))
+            self.assertEqual(build_result.slide_build_results[0].warnings, [])
+
+    def test_resolve_template_path_prefers_repo_canonical_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            template_path = Path(temp_dir) / "repo-default.pptx"
+            with zipfile.ZipFile(template_path, "w") as archive:
+                archive.writestr("[Content_Types].xml", "<Types></Types>")
+
+            with patch.object(PPTXRenderer, "_repo_template_candidates", return_value=[template_path]), patch.object(
+                PPTXRenderer,
+                "_find_fallback_template",
+                return_value=None,
+            ):
+                resolved_path, template_used, warnings = PPTXRenderer._resolve_template_path(_FakePptxModuleWithFile())
+
+        self.assertEqual(resolved_path, template_path.resolve())
+        self.assertEqual(template_used, str(template_path.resolve()))
+        self.assertTrue(any("repository canonical template" in warning for warning in warnings))
+
+    def test_resolve_template_path_raises_with_repo_path_hint_when_no_template_available(self) -> None:
+        with patch.object(PPTXRenderer, "_repo_template_candidates", return_value=[]), patch.object(
+            PPTXRenderer,
+            "_find_fallback_template",
+            return_value=None,
+        ):
+            with self.assertRaises(RuntimeError) as context:
+                PPTXRenderer._resolve_template_path(_FakePptxModuleWithFile())
+
+        self.assertIn("backend/templates/pptx/default.pptx", str(context.exception))
 
 
 if __name__ == "__main__":

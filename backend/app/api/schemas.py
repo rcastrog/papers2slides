@@ -32,10 +32,12 @@ class RunStatusResponse(BaseModel):
     """Run status payload served to polling clients."""
 
     run_id: str
+    source_pdf_name: str | None = None
     status: str
     current_stage: str
     completed_stages: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    stage_warnings: list[dict[str, Any]] = Field(default_factory=list)
     warning_count: int = 0
     key_artifact_paths: dict[str, str] = Field(default_factory=dict)
     checkpoint_state: dict[str, Any] = Field(default_factory=dict)

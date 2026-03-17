@@ -30,10 +30,15 @@ export type JobSubmissionResponse = {
 
 export type RunStatusResponse = {
   run_id: string;
+  source_pdf_name?: string | null;
   status: string;
   current_stage: string;
   completed_stages: string[];
   warnings: string[];
+  stage_warnings?: Array<{
+    stage: string;
+    warnings: string[];
+  }>;
   warning_count: number;
   key_artifact_paths: Record<string, string>;
   checkpoint_state: Record<string, unknown>;

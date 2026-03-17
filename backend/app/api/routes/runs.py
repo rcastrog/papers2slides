@@ -59,14 +59,34 @@ def get_run_status(run_id: str) -> RunStatusResponse:
     stage_entries = manifest.get("stages", [])
     if not isinstance(stage_entries, list):
         stage_entries = []
+    stage_warnings = [
+        {
+            "stage": str(stage.get("stage") or "unknown"),
+            "warnings": [str(item) for item in (stage.get("warnings") or []) if str(item).strip()],
+        }
+        for stage in stage_entries
+        if isinstance(stage, dict) and isinstance(stage.get("warnings"), list) and stage.get("warnings")
+    ]
+    global_warnings = [str(item) for item in warnings if str(item).strip()]
+    stage_warning_text = {
+        item
+        for group in stage_warnings
+        for item in group.get("warnings", [])
+        if isinstance(item, str) and item.strip()
+    }
+    global_warnings = [item for item in global_warnings if item not in stage_warning_text]
+    if global_warnings:
+        stage_warnings.insert(0, {"stage": "run_global", "warnings": global_warnings})
     fallback_stage_count = sum(1 for stage in stage_entries if isinstance(stage, dict) and stage.get("fallback_used"))
 
     return RunStatusResponse(
         run_id=manifest.get("run_id", run_id),
+        source_pdf_name=_resolve_source_pdf_name(run_path),
         status=manifest.get("status", "running"),
         current_stage=manifest.get("current_stage", "unknown"),
         completed_stages=manifest.get("completed_stages", []),
         warnings=warnings,
+        stage_warnings=stage_warnings,
         warning_count=len(warnings),
         key_artifact_paths=manifest.get("artifacts", {}),
         checkpoint_state=manifest.get("checkpoint_state", {}),
@@ -76,6 +96,20 @@ def get_run_status(run_id: str) -> RunStatusResponse:
         total_duration_ms=manifest.get("duration_ms"),
         job_summary=(manifest.get("run_summary", {}) or {}).get("job_summary", {}),
     )
+
+
+def _resolve_source_pdf_name(run_path: Path) -> str | None:
+    candidates = [
+        run_path / "source_paper",
+        run_path / "input",
+    ]
+    for folder in candidates:
+        if not folder.is_dir():
+            continue
+        pdfs = sorted(folder.glob("*.pdf"))
+        if pdfs:
+            return pdfs[0].name
+    return None
 
 
 @router.post("/runs/{run_id}/cancel")

@@ -700,6 +700,19 @@ def run_workflow(
         _save_running_manifest(stage_id)
         return result
 
+    def _append_stage_warnings(stage_id: str, warnings: list[str]) -> None:
+        cleaned = [str(item) for item in warnings if str(item).strip()]
+        if not cleaned:
+            return
+
+        for stage in reversed(stage_entries):
+            if isinstance(stage, dict) and str(stage.get("stage")) == stage_id:
+                existing = stage.get("warnings")
+                if not isinstance(existing, list):
+                    existing = []
+                stage["warnings"] = [*existing, *cleaned]
+                return
+
     source_pdf_path = _copy_pdf_to_run(pdf_path, run_manager)
     pdf_parse_output = PDFParser().parse(source_pdf_path)
     section_candidates = split_into_sections(pdf_parse_output.combined_text)
@@ -876,6 +889,7 @@ def run_workflow(
     asset_map_result = AssetMapper().build_asset_map(artifact_result, extracted_artifacts_bundle)
     run_manager.save_json("artifacts/source/asset_map.json", asset_map_result.to_dict())
     workflow_warnings.extend(asset_map_result.warnings)
+    _append_stage_warnings("A3", asset_map_result.warnings)
     resolved_asset_map = dict(asset_map_result.map)
 
     reference_index_result = _run_stage(
@@ -899,23 +913,27 @@ def run_workflow(
         references_raw=reference_parse_output.references_raw,
     )
     workflow_warnings.extend(coverage_warnings)
+    _append_stage_warnings("A4", coverage_warnings)
     reference_index_result, deterministic_recovery_warnings = _recover_references_deterministically(
         reference_index=reference_index_result,
         run_path=run_path,
         arxiv_client=arxiv_client,
     )
     workflow_warnings.extend(deterministic_recovery_warnings)
+    _append_stage_warnings("A4", deterministic_recovery_warnings)
     reference_index_result, retrieval_promotion_warnings = _promote_reference_retrieval_from_identifiers(
         reference_index=reference_index_result,
         arxiv_client=arxiv_client,
     )
     workflow_warnings.extend(retrieval_promotion_warnings)
+    _append_stage_warnings("A4", retrieval_promotion_warnings)
     reference_index_result, retrieval_integrity_warnings = _enforce_reference_retrieval_integrity(
         reference_index=reference_index_result,
         run_path=run_path,
         arxiv_client=arxiv_client,
     )
     workflow_warnings.extend(retrieval_integrity_warnings)
+    _append_stage_warnings("A4", retrieval_integrity_warnings)
     run_manager.save_json("references/reference_index.json", reference_index_result.model_dump())
 
     def _run_reference_summary_stage(_stage: dict[str, Any]) -> list[Any]:
@@ -945,7 +963,9 @@ def run_workflow(
     )
 
     if reference_index_result.retrieval_summary.not_found_count > 0:
-        workflow_warnings.append("Some references could not be retrieved in V1")
+        unresolved_warning = "Some references could not be retrieved in V1"
+        workflow_warnings.append(unresolved_warning)
+        _append_stage_warnings("A5", [unresolved_warning])
 
     presentation_plan = _run_stage(
         "A6",
@@ -1056,6 +1076,7 @@ def run_workflow(
     )
     resolved_asset_map.update(generated_image_map)
     workflow_warnings.extend(image_warnings)
+    _append_stage_warnings("A8", image_warnings)
     if generated_image_map:
         run_manager.save_json(
             "presentation/generated_image_assets.json",

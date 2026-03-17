@@ -13,8 +13,6 @@ export function JobForm() {
   const [presentationStyle, setPresentationStyle] = useState("journal_club");
   const [audience, setAudience] = useState("research_specialists");
   const [language, setLanguage] = useState("en");
-  const [includeReveal, setIncludeReveal] = useState(true);
-  const [includePptx, setIncludePptx] = useState(true);
   const [repairOnAudit, setRepairOnAudit] = useState(false);
   const [targetSlideCount, setTargetSlideCount] = useState(12);
   const [targetDurationMinutes, setTargetDurationMinutes] = useState(20);
@@ -31,17 +29,10 @@ export function JobForm() {
     event.preventDefault();
     setError(null);
 
-    const outputFormats: string[] = [];
-    if (includeReveal) outputFormats.push("reveal");
-    if (includePptx) outputFormats.push("pptx");
+    const outputFormats: string[] = ["reveal", "pptx"];
 
     if (!pdfFile && !sourceUrl.trim()) {
       setError("Please provide either a PDF upload or a source URL.");
-      return;
-    }
-
-    if (outputFormats.length === 0) {
-      setError("Select at least one output format.");
       return;
     }
 
@@ -141,20 +132,7 @@ export function JobForm() {
               <div className="field">
                 <span className="field-label">Output formats</span>
                 <div className="checkbox-group">
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={includeReveal}
-                      onChange={(event: ChangeEvent<HTMLInputElement>) => setIncludeReveal(event.target.checked)}
-                    /> Reveal
-                  </label>
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={includePptx}
-                      onChange={(event: ChangeEvent<HTMLInputElement>) => setIncludePptx(event.target.checked)}
-                    /> PPTX
-                  </label>
+                  <div className="muted">Reveal and PPTX are always generated for each run.</div>
                 </div>
               </div>
             </div>
@@ -271,7 +249,7 @@ export function JobForm() {
               <div className="summary-row"><span>Duration</span><strong>{targetDurationMinutes} min</strong></div>
               <div className="summary-row"><span>Audience</span><strong>{audience}</strong></div>
               <div className="summary-row"><span>Language</span><strong>{language}</strong></div>
-              <div className="summary-row"><span>Formats</span><strong>{[includeReveal ? "Reveal" : null, includePptx ? "PPTX" : null].filter(Boolean).join(", ") || "None"}</strong></div>
+              <div className="summary-row"><span>Formats</span><strong>Reveal, PPTX</strong></div>
               <div className="summary-row"><span>Image mode</span><strong>{disableGeneratedImages ? "Source-only" : "Mixed"}</strong></div>
             </div>
 

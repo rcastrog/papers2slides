@@ -6,6 +6,7 @@ import importlib
 import os
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.models.generated_visuals import GeneratedVisuals
 from app.models.pptx_result import PPTXBuildResult
@@ -49,16 +50,31 @@ class PPTXRenderer:
             pptx_slide = presentation.slides.add_slide(presentation.slide_layouts[1])
             pptx_slide.shapes.title.text = slide.title
 
+            visuals = self._collect_slide_visuals(
+                slide_number=slide.slide_number,
+                planned_visuals=slide.visuals,
+                generated_visuals=visuals_by_slide.get(slide.slide_number, []),
+            )
+
             body_shape = pptx_slide.shapes.placeholders[1]
+            self._configure_body_layout(
+                body_shape=body_shape,
+                has_visual_target=bool(visuals),
+                presentation=presentation,
+            )
             text_frame = body_shape.text_frame
             text_frame.clear()
             for index, point in enumerate(slide.key_points):
                 paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
                 paragraph.text = point
+            self._apply_bullet_text_downshift(text_frame=text_frame, points=slide.key_points)
 
-            citations = "; ".join(citation.short_citation for citation in slide.citations)
-            citation_box = pptx_slide.shapes.add_textbox(left=0, top=5000000, width=9000000, height=300000)
-            citation_box.text_frame.text = f"Citations: {citations}" if citations else "Citations:"
+            citations = [citation.short_citation for citation in slide.citations]
+            self._insert_citations_box(
+                pptx_slide=pptx_slide,
+                citations=citations,
+                presentation=presentation,
+            )
             self._insert_page_number(
                 pptx_slide=pptx_slide,
                 presentation=presentation,
@@ -72,7 +88,6 @@ class PPTXRenderer:
                 notes_slide = pptx_slide.notes_slide
                 notes_slide.notes_text_frame.text = notes_text
 
-            visuals = visuals_by_slide.get(slide.slide_number, [])
             warnings = []
             assets_used = []
             inserted_visual_count = 0
@@ -190,6 +205,12 @@ class PPTXRenderer:
         if default_template.is_file() and zipfile.is_zipfile(default_template):
             return None, "default", []
 
+        repo_template = PPTXRenderer._find_repo_template()
+        if repo_template is not None:
+            return repo_template, str(repo_template), [
+                "python-pptx default template is invalid; using repository canonical template."
+            ]
+
         fallback_template = PPTXRenderer._find_fallback_template()
         if fallback_template is not None:
             return fallback_template, str(fallback_template), [
@@ -199,8 +220,23 @@ class PPTXRenderer:
         raise RuntimeError(
             "python-pptx default template is missing or invalid. "
             "Set PAPER2SLIDES_PPTX_TEMPLATE_PATH to a valid .pptx template "
-            "or reinstall python-pptx in the active environment."
+            "or add a canonical template at backend/templates/pptx/default.pptx."
         )
+
+    @staticmethod
+    def _repo_template_candidates() -> list[Path]:
+        backend_root = Path(__file__).resolve().parents[2]
+        return [
+            backend_root / "templates" / "pptx" / "default.pptx",
+            backend_root / "templates" / "default.pptx",
+        ]
+
+    @staticmethod
+    def _find_repo_template() -> Path | None:
+        for candidate in PPTXRenderer._repo_template_candidates():
+            if candidate.is_file() and zipfile.is_zipfile(candidate):
+                return candidate.resolve()
+        return None
 
     @staticmethod
     def _find_fallback_template() -> Path | None:
@@ -253,15 +289,140 @@ class PPTXRenderer:
         return ""
 
     @staticmethod
+    def _collect_slide_visuals(*, slide_number: int, planned_visuals: list[object], generated_visuals: list[object]) -> list[object]:
+        visual_entries: list[object] = list(generated_visuals)
+
+        existing_ids = {
+            str(getattr(item, "visual_id", "")).strip()
+            for item in visual_entries
+            if str(getattr(item, "visual_id", "")).strip()
+        }
+        existing_artifacts: set[str] = set()
+        for item in visual_entries:
+            basis = getattr(item, "conceptual_basis", None)
+            source_ids = list(getattr(basis, "grounded_in_source_artifacts", []) or [])
+            existing_artifacts.update(str(source_id).strip() for source_id in source_ids if str(source_id).strip())
+
+        for index, planned in enumerate(planned_visuals, start=1):
+            asset_id = str(getattr(planned, "asset_id", "")).strip()
+            visual_type = str(getattr(planned, "visual_type", "")).strip().lower()
+            usage_mode = str(getattr(planned, "usage_mode", "")).strip().lower()
+
+            if visual_type == "text_only" or usage_mode == "none" or not asset_id or asset_id.lower() == "none":
+                continue
+            if asset_id in existing_ids or asset_id in existing_artifacts:
+                continue
+
+            conceptual = visual_type == "generated_conceptual" or usage_mode == "conceptual"
+            visual_entries.append(
+                SimpleNamespace(
+                    visual_id=asset_id,
+                    slide_number=slide_number,
+                    provenance_label="conceptual" if conceptual else "adapted_from_source",
+                    conceptual_basis=SimpleNamespace(grounded_in_source_artifacts=[asset_id] if not conceptual else []),
+                    visual_spec=SimpleNamespace(main_elements=[str(getattr(planned, "why_this_visual", "")).strip()]),
+                )
+            )
+            existing_ids.add(asset_id)
+
+        return visual_entries
+
+    @staticmethod
+    def _apply_bullet_text_downshift(*, text_frame: object, points: list[str]) -> None:
+        # Keep all content while reducing overflow risk on dense slides.
+        max_len = max((len(point) for point in points), default=0)
+        count = len(points)
+        font_size = 18
+        if count >= 6 or max_len >= 140:
+            font_size = 16
+        if count >= 8 or max_len >= 220:
+            font_size = 14
+        if count >= 10 or max_len >= 320:
+            font_size = 12
+
+        setattr(text_frame, "word_wrap", True)
+        font_size_value = PPTXRenderer._to_pptx_points(font_size)
+        for paragraph in getattr(text_frame, "paragraphs", []):
+            font = getattr(paragraph, "font", None)
+            if font is None:
+                continue
+            try:
+                font.size = font_size_value
+            except Exception:
+                continue
+
+    @staticmethod
+    def _configure_body_layout(*, body_shape: object, has_visual_target: bool, presentation: object) -> None:
+        slide_width = int(getattr(presentation, "slide_width", 12_192_000))
+        slide_height = int(getattr(presentation, "slide_height", 6_858_000))
+
+        left_margin = 460_000
+        top = 1_700_000
+        bottom_reserved = 1_240_000
+        height = max(2_000_000, slide_height - top - bottom_reserved)
+
+        if has_visual_target:
+            width = max(3_800_000, int(slide_width * 0.45))
+        else:
+            width = max(6_500_000, slide_width - (left_margin * 2))
+
+        try:
+            body_shape.left = left_margin
+            body_shape.top = top
+            body_shape.width = width
+            body_shape.height = height
+        except Exception:
+            return
+
+    @staticmethod
+    def _insert_citations_box(*, pptx_slide: object, citations: list[str], presentation: object) -> None:
+        lines = [citation.strip() for citation in citations if citation.strip()]
+        if not lines:
+            text = "Citations:"
+        else:
+            text = "Citations:\n" + "\n".join(f"- {line}" for line in lines)
+
+        slide_width = int(getattr(presentation, "slide_width", 12_192_000))
+        slide_height = int(getattr(presentation, "slide_height", 6_858_000))
+        left_margin = 260_000
+        right_margin = 1_260_000
+        bottom_margin = 360_000
+        line_count = max(1, len(lines) + 1)
+        box_height = min(1_000_000, 180_000 + (line_count * 110_000))
+        width = max(6_200_000, slide_width - left_margin - right_margin)
+        top = max(0, slide_height - box_height - bottom_margin)
+        box = pptx_slide.shapes.add_textbox(left=left_margin, top=top, width=width, height=box_height)
+        box.text_frame.text = text
+        setattr(box.text_frame, "word_wrap", True)
+
+        font_size_value = PPTXRenderer._to_pptx_points(11)
+        for paragraph in getattr(box.text_frame, "paragraphs", []):
+            font = getattr(paragraph, "font", None)
+            if font is None:
+                continue
+            try:
+                font.size = font_size_value
+            except Exception:
+                continue
+
+    @staticmethod
+    def _to_pptx_points(size_pt: int) -> object:
+        try:
+            util_module = importlib.import_module("pptx.util")
+            return util_module.Pt(size_pt)
+        except Exception:
+            return size_pt
+
+    @staticmethod
     def _insert_picture(*, pptx_slide: object, image_path: Path, slot_index: int) -> bool:
         if not image_path.is_file():
             return False
 
         # Keep deterministic image placement so decks are consistent across runs.
-        left = 4_900_000
-        top = 1_300_000 + (slot_index * 300_000)
-        width = 4_200_000
-        height = 3_000_000
+        left = 6_050_000
+        top = 1_550_000 + (slot_index * 180_000)
+        width = 5_500_000
+        height = 3_250_000
 
         try:
             pptx_slide.shapes.add_picture(str(image_path), left, top, width=width, height=height)
@@ -272,10 +433,10 @@ class PPTXRenderer:
     @staticmethod
     def _insert_conceptual_card(*, pptx_slide: object, visual: object, slot_index: int) -> bool:
         """Insert a deterministic conceptual diagram card when no image asset exists."""
-        left = 4_900_000
-        top = 1_300_000 + (slot_index * 2_100_000)
-        width = 4_200_000
-        height = 1_950_000
+        left = 6_050_000
+        top = 1_550_000 + (slot_index * 1_900_000)
+        width = 5_500_000
+        height = 1_850_000
 
         elements = list(getattr(getattr(visual, "visual_spec", object()), "main_elements", []))[:4]
         lines = [f"- {str(item)}" for item in elements if str(item).strip()]

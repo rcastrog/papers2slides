@@ -164,6 +164,7 @@ export function RunStatus({ runId }: RunStatusProps) {
         <h3 className="section-title">General</h3>
         <div className="status-grid">
           <div>Run ID: {runId}</div>
+          <div>Source PDF: {status?.source_pdf_name || "unknown"}</div>
           <div>Status: {status?.status ?? "loading"}</div>
           <div>Current stage: {status?.current_stage ? formatStageLabel(status.current_stage) : "unknown"}</div>
           <div>
@@ -181,6 +182,7 @@ export function RunStatus({ runId }: RunStatusProps) {
         <div className="panel stack">
           <h3 className="section-title">Run Status</h3>
           <div className="status-grid">
+            <div>Source PDF: {status?.source_pdf_name || "unknown"}</div>
             <div>Status: {status?.status ?? "loading"}</div>
             <div>Current stage: {status?.current_stage ? formatStageLabel(status.current_stage) : "unknown"}</div>
             <div>Recorded stages: {status?.stage_count ?? 0}</div>
@@ -247,6 +249,36 @@ export function RunStatus({ runId }: RunStatusProps) {
         {canRetry ? (
           <div className="muted">Retry run: Starts a new run using the same source file and prior parameters.</div>
         ) : null}
+      </div>
+
+      <div className="panel stack">
+        <h3 className="section-title">Warnings</h3>
+        {status?.stage_warnings && status.stage_warnings.length > 0 ? (
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {status.stage_warnings.map((group, groupIndex) => (
+              <li key={`${group.stage}-${groupIndex}`} style={{ marginBottom: 8, overflowWrap: "anywhere" }}>
+                {group.stage === "run_global" ? "Run-level" : formatStageLabel(group.stage)}
+                <ul style={{ margin: "6px 0 0 0", paddingLeft: 20 }}>
+                  {group.warnings.map((warning, warningIndex) => (
+                    <li key={`${group.stage}-${warningIndex}`} style={{ marginBottom: 6, overflowWrap: "anywhere" }}>
+                      {warning}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        ) : status?.warnings && status.warnings.length > 0 ? (
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {status.warnings.map((warning, index) => (
+              <li key={`${warning}-${index}`} style={{ marginBottom: 6, overflowWrap: "anywhere" }}>
+                {warning}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="muted">No warnings recorded for this run.</div>
+        )}
       </div>
 
       {actionMessage ? <div className="success">{actionMessage}</div> : null}
