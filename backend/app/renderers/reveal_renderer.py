@@ -383,10 +383,11 @@ class RevealRenderer:
     def _purpose_label(citation_row: dict[str, Any]) -> str:
         purpose = str(citation_row.get("purpose", "contextual_reference")).strip().lower()
         language = str(citation_row.get("language", "en")).strip().lower()
+        citation_text = str(citation_row.get("text", "")).strip()
         slide_title = str(citation_row.get("slide_title", "")).strip()
         slide_objective = str(citation_row.get("slide_objective", "")).strip()
         key_points = citation_row.get("key_points", [])
-        claim_anchor = RevealRenderer._select_claim_anchor(key_points)
+        claim_anchor = RevealRenderer._select_claim_anchor(key_points, citation_text=citation_text)
 
         if language == "es":
             fallback_subject = "el punto principal de la diapositiva"
@@ -398,25 +399,61 @@ class RevealRenderer:
         if len(subject) > 120:
             subject = subject[:117].rstrip() + "..."
 
+        variation_seed = f"{citation_text}|{slide_title}|{purpose}|{language}"
+
         if language == "es":
             if purpose == "source_of_claim":
-                return f"respalda la afirmacion sobre {subject}"
+                templates = (
+                    "respalda la afirmacion sobre {subject}",
+                    "sustenta la evidencia vinculada con {subject}",
+                )
+                return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
             if purpose == "method_background":
-                return f"aporta contexto metodologico para {subject}"
+                templates = (
+                    "aporta contexto metodologico para {subject}",
+                    "enmarca el enfoque metodologico usado en {subject}",
+                )
+                return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
             if purpose == "attribution":
-                return f"atribuye el detalle de fuente relacionado con {subject}"
-            return f"aporta contexto para {subject}"
+                templates = (
+                    "atribuye el detalle de fuente relacionado con {subject}",
+                    "identifica la procedencia del dato citado en {subject}",
+                )
+                return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
+            templates = (
+                "aporta contexto para {subject}",
+                "complementa el marco interpretativo de {subject}",
+                "refuerza el contexto de fondo para {subject}",
+            )
+            return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
 
         if purpose == "source_of_claim":
-            return f"supports the claim about {subject}"
+            templates = (
+                "supports the claim about {subject}",
+                "anchors the evidence behind {subject}",
+            )
+            return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
         if purpose == "method_background":
-            return f"provides method background for {subject}"
+            templates = (
+                "provides method background for {subject}",
+                "frames the methodological basis for {subject}",
+            )
+            return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
         if purpose == "attribution":
-            return f"attributes source detail related to {subject}"
-        return f"provides context for {subject}"
+            templates = (
+                "attributes source detail related to {subject}",
+                "identifies the source provenance for {subject}",
+            )
+            return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
+        templates = (
+            "provides context for {subject}",
+            "adds supporting context for {subject}",
+            "grounds the background framing for {subject}",
+        )
+        return RevealRenderer._format_with_variation(templates, subject=subject, seed=variation_seed)
 
     @staticmethod
-    def _select_claim_anchor(key_points: Any) -> str:
+    def _select_claim_anchor(key_points: Any, *, citation_text: str = "") -> str:
         if not isinstance(key_points, list):
             return ""
 
@@ -428,8 +465,7 @@ class RevealRenderer:
             "provides context",
             "aporta contexto",
         )
-        best_point = ""
-        best_score = -1
+        scored_points: list[tuple[int, str]] = []
         for raw in key_points:
             point = re.sub(r"\s+", " ", str(raw or "")).strip().rstrip(".")
             if not point:
@@ -443,10 +479,33 @@ class RevealRenderer:
             if re.search(r"[%:+/=]", point):
                 score += 1
             score += min(len(point) // 40, 3)
-            if score > best_score:
-                best_score = score
-                best_point = point
-        return best_point
+            scored_points.append((score, point))
+
+        if not scored_points:
+            return ""
+
+        scored_points.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        top_candidates = [point for _, point in scored_points[:3]]
+        if len(top_candidates) == 1:
+            return top_candidates[0]
+
+        seed = citation_text or top_candidates[0]
+        index = RevealRenderer._stable_variant_index(seed=seed, modulo=len(top_candidates))
+        return top_candidates[index]
+
+    @staticmethod
+    def _stable_variant_index(*, seed: str, modulo: int) -> int:
+        if modulo <= 1:
+            return 0
+        total = sum(ord(character) for character in seed)
+        return total % modulo
+
+    @staticmethod
+    def _format_with_variation(templates: tuple[str, ...], *, subject: str, seed: str) -> str:
+        if not templates:
+            return subject
+        index = RevealRenderer._stable_variant_index(seed=seed, modulo=len(templates))
+        return templates[index].format(subject=subject)
 
     @staticmethod
     def _prepare_asset_for_html(*, resolved_asset: str, output_dir: Path, assets_dir: Path) -> str:

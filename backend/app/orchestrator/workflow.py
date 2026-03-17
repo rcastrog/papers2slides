@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
 import shutil
 import logging
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from dataclasses import replace
 import urllib.request
 import urllib.parse
@@ -68,6 +70,39 @@ _ARXIV_QUERY_MAX_ATTEMPTS = 5
 _ARXIV_QUERY_MAX_CANDIDATES = 6
 _OPENALEX_QUERY_MAX_ATTEMPTS = 4
 _OPENALEX_QUERY_MAX_CANDIDATES = 6
+_SEMANTIC_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "de",
+    "del",
+    "el",
+    "en",
+    "for",
+    "from",
+    "in",
+    "is",
+    "la",
+    "las",
+    "los",
+    "of",
+    "on",
+    "or",
+    "para",
+    "por",
+    "that",
+    "the",
+    "to",
+    "un",
+    "una",
+    "with",
+    "y",
+}
 
 
 class WorkflowCancelledError(RuntimeError):
@@ -90,6 +125,270 @@ def _build_job_summary(options: dict[str, Any], repair_on_audit: bool) -> dict[s
         "image_gen_max_images_per_run": options.get("image_gen_max_images_per_run"),
         "repair_on_audit": repair_on_audit,
     }
+
+
+def compute_repetition_metrics(plan: PresentationPlan) -> dict[str, Any]:
+    bullet_texts: list[str] = []
+    slide_signatures: list[str] = []
+    citation_labels: list[str] = []
+    citation_reasons: list[str] = []
+
+    for slide in plan.slides:
+        key_points = [str(item).strip() for item in slide.key_points if str(item).strip()]
+        bullet_texts.extend(key_points)
+
+        slide_signature = " | ".join(
+            [
+                str(slide.title).strip(),
+                str(slide.objective).strip(),
+                *key_points,
+            ]
+        )
+        if slide_signature.strip():
+            slide_signatures.append(slide_signature)
+
+        anchor = _select_repetition_anchor(key_points=key_points, objective=slide.objective, title=slide.title)
+        for citation in slide.citations:
+            citation_label = str(citation.short_citation).strip()
+            if citation_label:
+                citation_labels.append(citation_label)
+            reason = f"{citation.citation_purpose}: {anchor}"
+            citation_reasons.append(reason)
+
+    bullet_summary = _summarize_text_repetition(
+        bullet_texts,
+        threshold=0.74,
+        min_chars_for_similarity=28,
+    )
+    slide_summary = _summarize_text_repetition(
+        slide_signatures,
+        threshold=0.68,
+        min_chars_for_similarity=40,
+    )
+    citation_label_summary = _summarize_exact_repetition(citation_labels)
+    citation_reason_summary = _summarize_text_repetition(
+        citation_reasons,
+        threshold=0.72,
+        min_chars_for_similarity=24,
+    )
+
+    return {
+        "semantic_similarity_thresholds": {
+            "bullet": 0.74,
+            "slide": 0.68,
+            "citation_reason": 0.72,
+        },
+        "bullet": {
+            "total": bullet_summary["total"],
+            "unique_exact": bullet_summary["unique_exact"],
+            "exact_unique_ratio": bullet_summary["exact_unique_ratio"],
+            "exact_repeated_instances": bullet_summary["exact_repeated_instances"],
+            "near_duplicate_pair_count": bullet_summary["near_duplicate_pair_count"],
+            "near_duplicate_cluster_count": bullet_summary["near_duplicate_cluster_count"],
+            "max_near_duplicate_similarity": bullet_summary["max_near_duplicate_similarity"],
+            "top_exact_repeats": bullet_summary["top_exact_repeats"],
+            "near_duplicate_examples": bullet_summary["near_duplicate_examples"],
+        },
+        "slide": {
+            "total": slide_summary["total"],
+            "unique_exact": slide_summary["unique_exact"],
+            "exact_unique_ratio": slide_summary["exact_unique_ratio"],
+            "exact_repeated_instances": slide_summary["exact_repeated_instances"],
+            "near_duplicate_pair_count": slide_summary["near_duplicate_pair_count"],
+            "near_duplicate_cluster_count": slide_summary["near_duplicate_cluster_count"],
+            "max_near_duplicate_similarity": slide_summary["max_near_duplicate_similarity"],
+            "top_exact_repeats": slide_summary["top_exact_repeats"],
+            "near_duplicate_examples": slide_summary["near_duplicate_examples"],
+        },
+        "citation": {
+            "total_mentions": citation_label_summary["total"],
+            "unique_labels_exact": citation_label_summary["unique_exact"],
+            "exact_unique_label_ratio": citation_label_summary["exact_unique_ratio"],
+            "exact_label_repeated_instances": citation_label_summary["exact_repeated_instances"],
+            "top_repeated_labels": citation_label_summary["top_exact_repeats"],
+            "reason_near_duplicate_pair_count": citation_reason_summary["near_duplicate_pair_count"],
+            "reason_near_duplicate_cluster_count": citation_reason_summary["near_duplicate_cluster_count"],
+            "max_reason_similarity": citation_reason_summary["max_near_duplicate_similarity"],
+            "reason_near_duplicate_examples": citation_reason_summary["near_duplicate_examples"],
+        },
+    }
+
+
+def compute_repetition_metrics_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    try:
+        plan = PresentationPlan.model_validate(payload)
+    except Exception:
+        return {}
+    return compute_repetition_metrics(plan)
+
+
+def _select_repetition_anchor(*, key_points: list[str], objective: str, title: str) -> str:
+    candidates = [point for point in key_points if point]
+    if candidates:
+        return max(candidates, key=lambda value: len(value))
+    if str(objective).strip():
+        return str(objective).strip()
+    return str(title).strip()
+
+
+def _summarize_exact_repetition(values: list[str]) -> dict[str, Any]:
+    normalized_values = [re.sub(r"\s+", " ", str(item or "").strip()) for item in values]
+    normalized_values = [item for item in normalized_values if item]
+    total = len(normalized_values)
+    if total == 0:
+        return {
+            "total": 0,
+            "unique_exact": 0,
+            "exact_unique_ratio": 1.0,
+            "exact_repeated_instances": 0,
+            "top_exact_repeats": [],
+        }
+
+    counts = Counter(normalized_values)
+    unique_exact = len(counts)
+    repeated = total - unique_exact
+    top_exact = [
+        {"text": text, "count": count}
+        for text, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        if count > 1
+    ][:5]
+
+    return {
+        "total": total,
+        "unique_exact": unique_exact,
+        "exact_unique_ratio": round(unique_exact / total, 4),
+        "exact_repeated_instances": repeated,
+        "top_exact_repeats": top_exact,
+    }
+
+
+def _summarize_text_repetition(
+    values: list[str],
+    *,
+    threshold: float,
+    min_chars_for_similarity: int,
+) -> dict[str, Any]:
+    exact_summary = _summarize_exact_repetition(values)
+    normalized_values = [re.sub(r"\s+", " ", str(item or "").strip()) for item in values]
+    normalized_values = [item for item in normalized_values if item]
+
+    candidates = [item for item in normalized_values if len(item) >= min_chars_for_similarity]
+    similarity = _near_duplicate_similarity_stats(candidates, threshold=threshold)
+
+    return {
+        **exact_summary,
+        "near_duplicate_pair_count": similarity["pair_count"],
+        "near_duplicate_cluster_count": similarity["cluster_count"],
+        "max_near_duplicate_similarity": similarity["max_similarity"],
+        "near_duplicate_examples": similarity["examples"],
+    }
+
+
+def _near_duplicate_similarity_stats(values: list[str], *, threshold: float) -> dict[str, Any]:
+    total = len(values)
+    if total < 2:
+        return {
+            "pair_count": 0,
+            "cluster_count": 0,
+            "max_similarity": 0.0,
+            "examples": [],
+        }
+
+    parents = list(range(total))
+
+    def _find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def _union(a: int, b: int) -> None:
+        root_a = _find(a)
+        root_b = _find(b)
+        if root_a != root_b:
+            parents[root_b] = root_a
+
+    pair_count = 0
+    max_similarity = 0.0
+    examples: list[dict[str, Any]] = []
+
+    for left in range(total):
+        for right in range(left + 1, total):
+            score = _semantic_similarity_score(values[left], values[right])
+            if score > max_similarity:
+                max_similarity = score
+            if score >= threshold:
+                pair_count += 1
+                _union(left, right)
+                if len(examples) < 3:
+                    examples.append(
+                        {
+                            "text_a": values[left],
+                            "text_b": values[right],
+                            "similarity": round(score, 4),
+                        }
+                    )
+
+    clusters = {
+        _find(index)
+        for index in range(total)
+        if any(_find(index) == _find(other) and index != other for other in range(total))
+    }
+
+    return {
+        "pair_count": pair_count,
+        "cluster_count": len(clusters),
+        "max_similarity": round(max_similarity, 4),
+        "examples": examples,
+    }
+
+
+def _semantic_similarity_score(left: str, right: str) -> float:
+    left_norm = _normalize_similarity_text(left)
+    right_norm = _normalize_similarity_text(right)
+    if not left_norm or not right_norm:
+        return 0.0
+    if left_norm == right_norm:
+        return 1.0
+
+    left_tokens = _tokenize_similarity(left_norm)
+    right_tokens = _tokenize_similarity(right_norm)
+    token_score = 0.0
+    union = left_tokens | right_tokens
+    if union:
+        token_score = len(left_tokens & right_tokens) / len(union)
+
+    sequence_score = SequenceMatcher(None, left_norm, right_norm).ratio()
+    return max(token_score, sequence_score * 0.9)
+
+
+def _normalize_similarity_text(value: str) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").lower())
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    text = re.sub(r"[^a-z0-9\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _tokenize_similarity(value: str) -> set[str]:
+    tokens: set[str] = set()
+    for token in value.split():
+        if token in _SEMANTIC_STOPWORDS:
+            continue
+        if len(token) <= 2:
+            continue
+        if token.endswith("ing") and len(token) > 5:
+            token = token[:-3]
+        elif token.endswith("ed") and len(token) > 4:
+            token = token[:-2]
+        elif token.endswith("es") and len(token) > 4:
+            token = token[:-2]
+        elif token.endswith("s") and len(token) > 3:
+            token = token[:-1]
+        tokens.add(token)
+    return tokens
 
 
 def _build_real_llm_client(settings: LLMSettings) -> LLMClient:
@@ -1047,6 +1346,7 @@ def run_workflow(
             "deck_risk_level": final_audit.deck_risk_level,
             "unresolved_high_severity_findings_count": unresolved_high,
         },
+        "repetition_metrics": compute_repetition_metrics(presentation_plan),
     }
 
     manifest_warnings = [*workflow_warnings, *list(final_audit.global_warnings)]
@@ -1659,6 +1959,15 @@ def _enforce_slide_density_and_target_count(
         changed = True
         structure_changed = True
 
+    repetition_changed = _reduce_cross_slide_bullet_repetition(
+        slides=slides,
+        sections_by_id=sections_by_id,
+        section_payloads=section_payloads,
+        language=language,
+    )
+    if repetition_changed:
+        changed = True
+
     for idx, slide in enumerate(slides, start=1):
         if isinstance(slide, dict):
             slide["slide_number"] = idx
@@ -1679,6 +1988,10 @@ def _enforce_slide_density_and_target_count(
         if structure_changed:
             warnings.append(
                 "Auto-policy: reordered structure to keep Abstract/Introduction context near the beginning and conclusions near the end (appendix-like slides may follow)."
+            )
+        if repetition_changed:
+            warnings.append(
+                "Auto-policy: reduced repeated long-form bullets across slides to improve content diversity."
             )
         payload["global_warnings"] = warnings
 
@@ -1820,6 +2133,13 @@ def _build_supporting_slides_for_target(
         for slide in existing_slides
         if isinstance(slide, dict)
     }
+    existing_bullet_keys = {
+        _normalize_bullet_key(str(point))
+        for slide in existing_slides
+        if isinstance(slide, dict)
+        for point in (slide.get("key_points", []) or [])
+        if _normalize_bullet_key(str(point))
+    }
 
     needed_support = max(0, target_slide_count - len(existing_slides))
     max_support_slides = min(needed_support, len(curated_sections))
@@ -1909,6 +2229,7 @@ def _build_supporting_slides_for_target(
             key_points = [_localize_spanish_text_fragment(item, slide={"slide_role": slide_role, "objective": objective}) for item in key_points]
         key_points = [item for item in key_points if not _is_low_value_support_line(item)]
         key_points = _dedupe_preserve_order(key_points)
+        key_points = [item for item in key_points if _normalize_bullet_key(item) not in existing_bullet_keys]
         if len(key_points) < 2:
             continue
         must_avoid = (
@@ -1980,6 +2301,7 @@ def _build_supporting_slides_for_target(
                 "layout_hint": "two_column",
             }
         )
+        existing_bullet_keys.update(_normalize_bullet_key(item) for item in key_points if _normalize_bullet_key(item))
 
     return additional
 
@@ -2128,6 +2450,95 @@ def _dedupe_preserve_order(values: list[str]) -> list[str]:
         seen.add(key)
         ordered.append(str(value).strip())
     return ordered
+
+
+def _normalize_bullet_key(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def _reduce_cross_slide_bullet_repetition(
+    *,
+    slides: list[dict[str, Any]],
+    sections_by_id: dict[str, dict[str, Any]],
+    section_payloads: list[dict[str, Any]],
+    language: str,
+) -> bool:
+    if not slides:
+        return False
+
+    counts: dict[str, int] = {}
+    samples: dict[str, str] = {}
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        for point in slide.get("key_points", []) or []:
+            text = str(point or "").strip()
+            key = _normalize_bullet_key(text)
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+            samples.setdefault(key, text)
+
+    overused = {
+        key
+        for key, count in counts.items()
+        if count > 2 and len(samples.get(key, "")) >= 85
+    }
+    if not overused:
+        return False
+
+    changed = False
+    seen: dict[str, int] = {}
+
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+
+        role = str(slide.get("slide_role", "")).strip().lower()
+        min_points = 3 if role == "title" else 4
+        original_points = [str(item).strip() for item in (slide.get("key_points", []) or []) if str(item).strip()]
+        kept_points: list[str] = []
+        local_seen: set[str] = set()
+
+        for point in original_points:
+            key = _normalize_bullet_key(point)
+            if not key or key in local_seen:
+                continue
+
+            if key in overused and seen.get(key, 0) >= 2:
+                changed = True
+                continue
+
+            kept_points.append(point)
+            local_seen.add(key)
+            seen[key] = seen.get(key, 0) + 1
+
+        if len(kept_points) < min_points:
+            candidates = _build_density_candidates_for_slide(
+                slide=slide,
+                sections_by_id=sections_by_id,
+                section_payloads=section_payloads,
+                language=language,
+            )
+            for candidate in candidates:
+                if len(kept_points) >= min_points:
+                    break
+                candidate_key = _normalize_bullet_key(candidate)
+                if not candidate_key or candidate_key in local_seen:
+                    continue
+                if candidate_key in overused and seen.get(candidate_key, 0) >= 2:
+                    continue
+                kept_points.append(candidate)
+                local_seen.add(candidate_key)
+                seen[candidate_key] = seen.get(candidate_key, 0) + 1
+                changed = True
+
+        normalized_points = _dedupe_preserve_order(kept_points)
+        if normalized_points != original_points:
+            slide["key_points"] = normalized_points
+            changed = True
+
+    return changed
 
 
 def _default_spanish_title_for_role(*, role: str) -> str:

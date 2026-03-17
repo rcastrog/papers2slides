@@ -56,6 +56,7 @@ class RunResultsResponse(BaseModel):
     audit_report_path: str | None = None
     final_risk_summary: dict[str, Any] = Field(default_factory=dict)
     asset_usage_summary: dict[str, Any] = Field(default_factory=dict)
+    repetition_metrics: dict[str, Any] = Field(default_factory=dict)
 
 
 class StageInspectionResponse(BaseModel):

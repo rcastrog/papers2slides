@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from fastapi.responses import FileResponse
 
-from app.api.schemas import RunResultsResponse, RunStatusResponse
-from app.orchestrator.workflow import recover_a11_only
+from app.api.routes.jobs import _execute_workflow
+from app.api.schemas import JobSubmissionResponse, RunResultsResponse, RunStatusResponse
+from app.orchestrator.workflow import compute_repetition_metrics_from_payload, recover_a11_only
 from app.services.run_inspector import RunInspector
 from app.storage.run_manager import RunManager
 
@@ -133,6 +135,68 @@ def recover_run_a11(run_id: str) -> dict[str, object]:
     }
 
 
+@router.post("/runs/{run_id}/retry", response_model=JobSubmissionResponse, status_code=status.HTTP_202_ACCEPTED)
+def retry_run(run_id: str, background_tasks: BackgroundTasks) -> JobSubmissionResponse:
+    """Create a new run by reusing a failed run's input PDF and workflow options."""
+    source_run_path = _resolve_run_path(run_id)
+    source_manifest = _load_json(source_run_path / "logs" / "run_manifest.json")
+    if source_manifest is None:
+        raise HTTPException(status_code=404, detail="Run manifest not found")
+
+    source_status = str(source_manifest.get("status", "")).strip().lower()
+    if source_status != "failed":
+        raise HTTPException(status_code=400, detail="Only failed runs can be retried")
+
+    source_pdf_path = _find_source_pdf_for_retry(source_run_path)
+    workflow_options, repair_on_audit = _build_retry_configuration(source_run_path, source_manifest)
+
+    backend_root = Path(__file__).resolve().parents[3]
+    runs_root = backend_root / "runs"
+    run_manager = RunManager(runs_root)
+
+    new_run_path = run_manager.create_run(slug="api-job")
+    new_run_id = new_run_path.name
+
+    input_dir = new_run_path / "input"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    new_pdf_path = input_dir / source_pdf_path.name
+    shutil.copy2(source_pdf_path, new_pdf_path)
+
+    queued_manifest = {
+        "run_id": new_run_id,
+        "status": "queued",
+        "current_stage": "A0",
+        "completed_stages": [],
+        "stages": [],
+        "warnings": [],
+        "errors": [],
+        "artifacts": {},
+        "checkpoint_state": {},
+        "started_at": None,
+        "finished_at": None,
+        "duration_ms": None,
+        "run_summary": {
+            "retry_of": run_id,
+        },
+    }
+    run_manager.save_json("logs/run_manifest.json", queued_manifest)
+
+    background_tasks.add_task(
+        _execute_workflow,
+        new_pdf_path,
+        new_run_path,
+        repair_on_audit,
+        workflow_options,
+    )
+
+    return JobSubmissionResponse(
+        run_id=new_run_id,
+        status="queued",
+        status_url=f"/runs/{new_run_id}",
+        results_url=f"/runs/{new_run_id}/results",
+    )
+
+
 @router.get("/runs/{run_id}/results", response_model=RunResultsResponse)
 def get_run_results(run_id: str) -> RunResultsResponse:
     """Return structured output summary for a completed run."""
@@ -231,7 +295,26 @@ def _build_results_payload(
     if not isinstance(asset_usage, dict):
         payload["asset_usage_summary"] = {}
 
+    repetition_metrics = payload.get("repetition_metrics")
+    if not isinstance(repetition_metrics, dict) or not repetition_metrics:
+        repetition_metrics = _load_repetition_metrics_for_run(run_path)
+    payload["repetition_metrics"] = repetition_metrics if isinstance(repetition_metrics, dict) else {}
+
     return payload
+
+
+def _load_repetition_metrics_for_run(run_path: Path) -> dict[str, Any]:
+    candidates = [
+        run_path / "presentation" / "presentation_plan_repaired.json",
+        run_path / "presentation" / "presentation_plan.json",
+    ]
+    for candidate in candidates:
+        payload = _load_json(candidate)
+        if isinstance(payload, dict):
+            metrics = compute_repetition_metrics_from_payload(payload)
+            if metrics:
+                return metrics
+    return {}
 
 
 @router.get("/runs/{run_id}/download/{artifact_name}")
@@ -268,11 +351,7 @@ def get_reveal_index(run_id: str) -> FileResponse:
     results = get_run_results(run_id)
 
     selected = results.reveal_path
-    if not selected:
-        raise HTTPException(status_code=404, detail="Reveal output not found")
-
-    reveal_root = (run_path / "presentation" / "reveal").resolve()
-    candidate = _resolve_child_path(base_dir=reveal_root, candidate_path=selected, run_path=run_path)
+    candidate = _resolve_reveal_index_path(run_path=run_path, selected_path=selected)
     if candidate is None:
         raise HTTPException(status_code=404, detail="Reveal output not found")
 
@@ -283,8 +362,7 @@ def get_reveal_index(run_id: str) -> FileResponse:
 def get_reveal_asset(run_id: str, asset_path: str) -> FileResponse:
     """Serve reveal assets while preventing path traversal."""
     run_path = _resolve_run_path(run_id)
-    assets_root = (run_path / "presentation" / "reveal" / "assets").resolve()
-    candidate = _resolve_child_path(base_dir=assets_root, candidate_path=asset_path, run_path=run_path)
+    candidate = _resolve_reveal_asset_path(run_path=run_path, asset_path=asset_path)
     if candidate is None:
         raise HTTPException(status_code=404, detail="Reveal asset not found")
     return FileResponse(path=candidate)
@@ -304,6 +382,56 @@ def _resolve_run_manager(run_path: Path) -> RunManager:
     run_manager = RunManager(backend_root / "runs")
     run_manager.set_run_path(run_path)
     return run_manager
+
+
+def _find_source_pdf_for_retry(run_path: Path) -> Path:
+    input_dir = run_path / "input"
+    if not input_dir.is_dir():
+        raise HTTPException(status_code=400, detail="Unable to retry run: original input directory is missing")
+
+    pdf_candidates = sorted(path for path in input_dir.glob("*.pdf") if path.is_file())
+    if not pdf_candidates:
+        raise HTTPException(status_code=400, detail="Unable to retry run: original input PDF is missing")
+
+    source_pdf = next((path for path in pdf_candidates if path.name.lower() == "source.pdf"), pdf_candidates[0])
+    return source_pdf
+
+
+def _build_retry_configuration(run_path: Path, manifest: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    job_summary = (manifest.get("run_summary") or {}).get("job_summary", {})
+    if not isinstance(job_summary, dict):
+        job_summary = {}
+
+    job_spec = _load_json(run_path / "input" / "job_spec.json") or {}
+
+    presentation_style = job_spec.get("presentation_style") or job_summary.get("presentation_style") or "journal_club"
+    audience = job_spec.get("audience") or job_summary.get("target_audience") or "research_specialists"
+    language = job_spec.get("language") or job_summary.get("language") or "en"
+    output_formats = job_spec.get("output_formats") or job_summary.get("output_formats") or ["reveal", "pptx"]
+
+    if not isinstance(output_formats, list) or not output_formats:
+        output_formats = ["reveal", "pptx"]
+    output_formats = [str(item).strip() for item in output_formats if str(item).strip()]
+    if not output_formats:
+        output_formats = ["reveal", "pptx"]
+
+    advanced_options = job_summary.get("advanced_options")
+    if not isinstance(advanced_options, dict):
+        advanced_options = {}
+
+    if isinstance(job_spec.get("advanced_options"), dict):
+        advanced_options = {**advanced_options, **job_spec.get("advanced_options")}
+
+    repair_on_audit = bool(job_spec.get("repair_on_audit", job_summary.get("repair_on_audit", False)))
+
+    workflow_options: dict[str, Any] = {
+        "presentation_style": str(presentation_style),
+        "audience": str(audience),
+        "language": str(language),
+        "output_formats": output_formats,
+        "advanced_options": advanced_options,
+    }
+    return workflow_options, repair_on_audit
 
 
 def _load_json(path: Path) -> dict[str, Any] | None:
@@ -345,6 +473,39 @@ def _resolve_child_path(*, base_dir: Path, candidate_path: str, run_path: Path) 
     if not candidate.is_file():
         return None
     return candidate
+
+
+def _reveal_roots(run_path: Path) -> list[Path]:
+    return [
+        (run_path / "presentation" / "reveal").resolve(),
+        (run_path / "presentation" / "reveal_repaired").resolve(),
+    ]
+
+
+def _resolve_reveal_index_path(*, run_path: Path, selected_path: str | None) -> Path | None:
+    roots = _reveal_roots(run_path)
+
+    if selected_path:
+        for root in roots:
+            candidate = _resolve_child_path(base_dir=root, candidate_path=selected_path, run_path=run_path)
+            if candidate is not None:
+                return candidate
+
+    for root in roots:
+        default_index = root / "index.html"
+        if default_index.is_file():
+            return default_index
+
+    return None
+
+
+def _resolve_reveal_asset_path(*, run_path: Path, asset_path: str) -> Path | None:
+    for root in _reveal_roots(run_path):
+        assets_root = (root / "assets").resolve()
+        candidate = _resolve_child_path(base_dir=assets_root, candidate_path=asset_path, run_path=run_path)
+        if candidate is not None:
+            return candidate
+    return None
 
 
 def _manifest_age_seconds(manifest_path: Path) -> float:

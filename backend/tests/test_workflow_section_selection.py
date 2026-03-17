@@ -1516,6 +1516,166 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
         self.assertIn("Results: Supporting Detail", titles)
         self.assertNotIn("Results: Supporting Detail (2)", titles)
 
+    def test_reduces_repeated_long_bullets_across_slides(self) -> None:
+        repeated = (
+            "Observed Exposure quantifies the gap between theoretical AI capabilities "
+            "and actual usage in professional settings across occupations and tasks."
+        )
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Deck",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "result",
+                    "title": "Result 1",
+                    "objective": "Explain",
+                    "key_points": [
+                        repeated,
+                        "Result signal A",
+                        "Result signal B",
+                        "Result signal C",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+                {
+                    "slide_number": 3,
+                    "slide_role": "result",
+                    "title": "Result 2",
+                    "objective": "Explain",
+                    "key_points": [
+                        repeated,
+                        "Result signal D",
+                        "Result signal E",
+                        "Result signal F",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+                {
+                    "slide_number": 4,
+                    "slide_role": "result",
+                    "title": "Result 3",
+                    "objective": "Explain",
+                    "key_points": [
+                        repeated,
+                        "Result signal G",
+                        "Result signal H",
+                        "Result signal I",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+            ],
+            target_count=4,
+        )
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=[],
+            target_slide_count=4,
+        )
+
+        all_points = [point for slide in updated.slides for point in slide.key_points]
+        repeated_count = sum(1 for point in all_points if point == repeated)
+        self.assertLessEqual(repeated_count, 2)
+        self.assertTrue(
+            any(
+                "reduced repeated long-form bullets" in warning.lower()
+                for warning in updated.global_warnings
+            )
+        )
+
+    def test_backfill_skips_support_slide_when_bullets_duplicate_existing(self) -> None:
+        existing_point = "Results improve baseline by 10% with stable confidence bounds."
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Deck",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "result",
+                    "title": "Results",
+                    "objective": "Explain",
+                    "key_points": [
+                        existing_point,
+                        "Auxiliary result point A",
+                        "Auxiliary result point B",
+                        "Auxiliary result point C",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+            ],
+            target_count=3,
+        )
+
+        sections = [
+            {
+                "section_id": "S51",
+                "section_title": "Results",
+                "section_role": ["experiment_result_interpretation"],
+                "key_claims": [{"claim": existing_point, "notes": ""}],
+                "important_details": [],
+                "summary": "",
+                "why_it_matters": "",
+            }
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=3,
+        )
+
+        self.assertEqual(len(updated.slides), 2)
+        self.assertFalse(any("Supporting Detail" in slide.title for slide in updated.slides))
+
     def test_backfill_skips_placeholder_only_support_content(self) -> None:
         plan = self._build_plan(
             [

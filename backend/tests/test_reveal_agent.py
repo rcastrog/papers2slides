@@ -19,6 +19,7 @@ from app.models.generated_visuals import GeneratedVisuals
 from app.models.presentation_plan import PresentationPlan
 from app.models.reveal_result import RevealRenderResult
 from app.models.speaker_notes import SpeakerNotes
+from app.renderers.reveal_renderer import RevealRenderer
 from app.services.llm_client import LLMClient
 from app.services.prompt_loader import PromptLoader
 
@@ -465,8 +466,13 @@ class RevealAgentSmokeTest(unittest.TestCase):
             html_content = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn("citation-chip", html_content)
             self.assertIn("Why cited", html_content)
-            self.assertIn("supports the claim about A", html_content)
-            self.assertIn("provides method background for A", html_content)
+            self.assertTrue(
+                ("supports the claim about A" in html_content) or ("anchors the evidence behind A" in html_content)
+            )
+            self.assertTrue(
+                ("provides method background for A" in html_content)
+                or ("frames the methodological basis for A" in html_content)
+            )
 
     def test_renderer_localizes_citation_explainability_for_spanish(self) -> None:
         llm_client = LLMClient(transport=FakeTransport())
@@ -538,6 +544,37 @@ class RevealAgentSmokeTest(unittest.TestCase):
             html_content = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn("Por que se cita", html_content)
             self.assertIn("respalda la afirmacion sobre", html_content)
+
+    def test_renderer_varies_contextual_citation_explainability(self) -> None:
+        row_a = {
+            "purpose": "contextual_reference",
+            "language": "en",
+            "text": "Reference A",
+            "slide_title": "Context slide",
+            "slide_objective": "Explain broader context",
+            "key_points": [
+                "Observed exposure combines model capability and real usage.",
+                "High-exposure occupations show slower projected growth.",
+            ],
+        }
+        row_b = {
+            "purpose": "contextual_reference",
+            "language": "en",
+            "text": "Reference B",
+            "slide_title": "Context slide",
+            "slide_objective": "Explain broader context",
+            "key_points": [
+                "Observed exposure combines model capability and real usage.",
+                "High-exposure occupations show slower projected growth.",
+            ],
+        }
+
+        label_a = RevealRenderer._purpose_label(row_a)
+        label_b = RevealRenderer._purpose_label(row_b)
+
+        self.assertNotEqual(label_a, label_b)
+        self.assertTrue(label_a)
+        self.assertTrue(label_b)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { cancelRun, getRunResults, getRunStatus, recoverRunA11, type RunStatusResponse } from "../lib/api";
+import { cancelRun, getRunResults, getRunStatus, recoverRunA11, retryRun, type RunStatusResponse } from "../lib/api";
 import { formatStageLabel } from "../lib/stage-names";
 
 type RunStatusProps = {
@@ -16,6 +16,7 @@ export function RunStatus({ runId }: RunStatusProps) {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [hasRevealOutput, setHasRevealOutput] = useState(false);
 
   useEffect(() => {
@@ -63,6 +64,11 @@ export function RunStatus({ runId }: RunStatusProps) {
   const canRecoverA11 = useMemo(() => {
     if (!status) return false;
     return status.status === "failed" && status.current_stage === "A11";
+  }, [status]);
+
+  const canRetry = useMemo(() => {
+    if (!status) return false;
+    return status.status === "failed";
   }, [status]);
 
   useEffect(() => {
@@ -129,6 +135,22 @@ export function RunStatus({ runId }: RunStatusProps) {
       setError(message);
     } finally {
       setIsRecovering(false);
+    }
+  }
+
+  async function handleRetryRun() {
+    setIsRetrying(true);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const result = await retryRun(runId);
+      setActionMessage(`Retry started: ${result.run_id}`);
+      window.location.assign(`/run/${result.run_id}`);
+    } catch (retryError) {
+      const message = retryError instanceof Error ? retryError.message : "Failed to retry run";
+      setError(message);
+    } finally {
+      setIsRetrying(false);
     }
   }
 
@@ -200,6 +222,30 @@ export function RunStatus({ runId }: RunStatusProps) {
           <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
             {isRecovering ? "Recovering..." : "Recover from A11"}
           </button>
+        ) : null}
+        {canRetry ? (
+          <button className="btn-secondary" type="button" disabled={isRetrying} onClick={handleRetryRun}>
+            {isRetrying ? "Starting retry..." : "Retry run"}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="panel stack">
+        <h3 className="section-title">Action hints</h3>
+        {canCancel ? <div className="muted">Stop run: Requests a safe stop at the next stage boundary.</div> : null}
+        {isCompleted ? (
+          <div className="muted">
+            Open Reveal: Opens the HTML slide deck generated for this run.
+            {!hasRevealOutput ? " (Unavailable because no Reveal output was generated.)" : ""}
+          </div>
+        ) : (
+          <div className="muted">Open Reveal: Available after the run completes and Reveal output exists.</div>
+        )}
+        {canRecoverA11 ? (
+          <div className="muted">Recover from A11: Re-runs only the final audit/repair stage for this failed run.</div>
+        ) : null}
+        {canRetry ? (
+          <div className="muted">Retry run: Starts a new run using the same source file and prior parameters.</div>
         ) : null}
       </div>
 

@@ -66,6 +66,51 @@ export type RunResultsResponse = {
     asset_map_total?: number;
     slides_using_real_source_figures?: number;
   };
+  repetition_metrics?: {
+    semantic_similarity_thresholds?: {
+      bullet?: number;
+      slide?: number;
+      citation_reason?: number;
+    };
+    bullet?: RepetitionLevelSummary;
+    slide?: RepetitionLevelSummary;
+    citation?: CitationRepetitionSummary;
+  };
+};
+
+export type RepetitionExample = {
+  text_a: string;
+  text_b: string;
+  similarity: number;
+};
+
+export type RepetitionCountItem = {
+  text: string;
+  count: number;
+};
+
+export type RepetitionLevelSummary = {
+  total?: number;
+  unique_exact?: number;
+  exact_unique_ratio?: number;
+  exact_repeated_instances?: number;
+  near_duplicate_pair_count?: number;
+  near_duplicate_cluster_count?: number;
+  max_near_duplicate_similarity?: number;
+  top_exact_repeats?: RepetitionCountItem[];
+  near_duplicate_examples?: RepetitionExample[];
+};
+
+export type CitationRepetitionSummary = {
+  total_mentions?: number;
+  unique_labels_exact?: number;
+  exact_unique_label_ratio?: number;
+  exact_label_repeated_instances?: number;
+  top_repeated_labels?: RepetitionCountItem[];
+  reason_near_duplicate_pair_count?: number;
+  reason_near_duplicate_cluster_count?: number;
+  max_reason_similarity?: number;
+  reason_near_duplicate_examples?: RepetitionExample[];
 };
 
 export type StageInspection = {
@@ -261,4 +306,13 @@ export async function recoverRunA11(runId: string): Promise<RunActionResponse> {
     throw new Error(`recoverRunA11 failed (${response.status}): ${text}`);
   }
   return (await response.json()) as RunActionResponse;
+}
+
+export async function retryRun(runId: string): Promise<JobSubmissionResponse> {
+  const response = await fetch(`${API_BASE_URL}/runs/${runId}/retry`, { method: "POST" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`retryRun failed (${response.status}): ${text}`);
+  }
+  return (await response.json()) as JobSubmissionResponse;
 }
