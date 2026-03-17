@@ -1806,7 +1806,12 @@ def _build_supporting_slides_for_target(
 
     start_number = len(existing_slides) + 1
     cursor = 0
+    max_iterations = max(len(curated_sections) * max(target_slide_count, 1) * 4, 50)
+    iterations = 0
     while start_number + len(additional) <= target_slide_count:
+        iterations += 1
+        if iterations > max_iterations:
+            break
         section = curated_sections[cursor % len(curated_sections)]
         cursor += 1
         role_list = section.get("section_role", [])
@@ -1865,7 +1870,16 @@ def _build_supporting_slides_for_target(
         title = candidate_title
         normalized_title = _normalize_title_for_match(title)
         if normalized_title in existing_title_keys:
-            continue
+            sequence = 2
+            while normalized_title in existing_title_keys and sequence <= 999:
+                if language == "es":
+                    title = f"{candidate_title} ({sequence})"
+                else:
+                    title = f"{candidate_title} ({sequence})"
+                normalized_title = _normalize_title_for_match(title)
+                sequence += 1
+            if normalized_title in existing_title_keys:
+                continue
         existing_title_keys.add(normalized_title)
 
         slide_number = start_number + len(additional)

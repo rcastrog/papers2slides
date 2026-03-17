@@ -1435,6 +1435,47 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
         self.assertEqual(added_slide.citations[0].short_citation, "Articulo fuente")
         self.assertTrue(any("Esta diapositiva de apoyo" in point for point in added_slide.key_points))
 
+    def test_backfill_adds_unique_suffix_when_same_section_repeats(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Deck",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                }
+            ],
+            target_count=3,
+        )
+
+        sections = [
+            {
+                "section_id": "S31",
+                "section_title": "Results",
+                "section_role": ["experiment_result_interpretation"],
+                "key_claims": [{"claim": "Result improves baseline by 10%", "notes": "validated"}],
+                "important_details": ["Confidence interval remains narrow"],
+            }
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=3,
+        )
+
+        titles = [slide.title for slide in updated.slides]
+        self.assertIn("Results: Supporting Detail", titles)
+        self.assertIn("Results: Supporting Detail (2)", titles)
+
 
 if __name__ == "__main__":
     unittest.main()
