@@ -44,8 +44,9 @@ class RevealRenderer:
 
         slide_results = []
         slide_html_parts = []
+        total_slides = len(presentation_plan.slides)
 
-        for slide in presentation_plan.slides:
+        for slide_index, slide in enumerate(presentation_plan.slides, start=1):
             note = notes_by_slide.get(slide.slide_number)
             generated_for_slide = generated_visuals_by_slide.get(slide.slide_number, [])
             citations = [citation.short_citation for citation in slide.citations]
@@ -196,6 +197,7 @@ class RevealRenderer:
     <ul>{key_points_html}</ul>
     <div class=\"visuals\">{visuals_html}</div>
   </div>
+    <div class=\"slide-page-number\">{slide_index} / {total_slides}</div>
     <footer>
         <div class="citation-row">{citations_html}</div>
         {citation_why_details}
@@ -252,6 +254,7 @@ class RevealRenderer:
             margin-bottom: 20px;
             padding: 22px;
             box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+            position: relative;
         }}
         .slide-title {{ margin: 0 0 14px 0; }}
         .slide-body {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }}
@@ -307,6 +310,17 @@ class RevealRenderer:
         .citation-why ul {{ margin: 6px 0 0 16px; padding: 0; }}
         .citation-why li {{ margin-bottom: 4px; color: #486581; }}
         .notes {{ margin-top: 12px; border-top: 1px dashed #bcccdc; padding-top: 10px; color: #334e68; }}
+        .slide-page-number {{
+            position: absolute;
+            right: 16px;
+            bottom: 12px;
+            font-size: 0.75rem;
+            color: #64748b;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid #e2e8f0;
+            border-radius: 999px;
+            padding: 2px 8px;
+        }}
         @media (max-width: 900px) {{
             main {{ padding: 16px; }}
             .slide {{ padding: 16px; }}

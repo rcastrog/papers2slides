@@ -44,6 +44,7 @@ class PPTXRenderer:
             visuals_by_slide.setdefault(item.slide_number, []).append(item)
 
         slide_results = []
+        total_slides = len(presentation_plan.slides)
         for slide in presentation_plan.slides:
             pptx_slide = presentation.slides.add_slide(presentation.slide_layouts[1])
             pptx_slide.shapes.title.text = slide.title
@@ -58,6 +59,12 @@ class PPTXRenderer:
             citations = "; ".join(citation.short_citation for citation in slide.citations)
             citation_box = pptx_slide.shapes.add_textbox(left=0, top=5000000, width=9000000, height=300000)
             citation_box.text_frame.text = f"Citations: {citations}" if citations else "Citations:"
+            self._insert_page_number(
+                pptx_slide=pptx_slide,
+                presentation=presentation,
+                slide_number=slide.slide_number,
+                total_slides=total_slides,
+            )
 
             note = notes_by_slide.get(slide.slide_number)
             if note is not None:
@@ -285,3 +292,21 @@ class PPTXRenderer:
             return True
         except Exception:
             return False
+
+    @staticmethod
+    def _insert_page_number(*, pptx_slide: object, presentation: object, slide_number: int, total_slides: int) -> None:
+        slide_width = int(getattr(presentation, "slide_width", 12_192_000))
+        slide_height = int(getattr(presentation, "slide_height", 6_858_000))
+        width = 900_000
+        height = 240_000
+        right_margin = 220_000
+        bottom_margin = 120_000
+
+        left = max(0, slide_width - width - right_margin)
+        top = max(0, slide_height - height - bottom_margin)
+
+        try:
+            box = pptx_slide.shapes.add_textbox(left=left, top=top, width=width, height=height)
+            box.text_frame.text = f"{slide_number} / {total_slides}"
+        except Exception:
+            return

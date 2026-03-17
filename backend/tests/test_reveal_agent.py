@@ -326,6 +326,8 @@ class RevealAgentSmokeTest(unittest.TestCase):
             self.assertTrue((output_dir / "index.html").is_file())
             html_content = (output_dir / "index.html").read_text(encoding="utf-8")
             self.assertIn("Slide 1", html_content)
+            self.assertIn("slide-page-number", html_content)
+            self.assertIn("1 / 1", html_content)
             self.assertEqual(render_result.render_status, "success")
 
     def test_renderer_renders_visual_frames_with_generated_fallback(self) -> None:
