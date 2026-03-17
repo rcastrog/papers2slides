@@ -13,7 +13,7 @@ BACKEND_ROOT = PROJECT_ROOT / "backend"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.api.routes.runs import _build_results_payload, _resolve_child_path
+from app.api.routes.runs import _build_results_payload, _finalize_stalled_manifest_if_needed, _resolve_child_path
 
 
 class RunsRoutesResultsPayloadTests(unittest.TestCase):
@@ -98,6 +98,44 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
             )
 
             self.assertIsNone(resolved)
+
+    def test_finalize_stalled_manifest_marks_failed_when_stage_already_completed(self) -> None:
+        manifest = {
+            "run_id": "api-job-stalled",
+            "status": "running",
+            "current_stage": "A6",
+            "completed_stages": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"],
+            "stages": [
+                {"stage": "A5", "status": "completed"},
+                {"stage": "A6", "status": "completed"},
+            ],
+            "errors": [],
+        }
+
+        normalized, changed = _finalize_stalled_manifest_if_needed(manifest, stale_seconds=900.0)
+
+        self.assertTrue(changed)
+        self.assertEqual(normalized["status"], "failed")
+        self.assertEqual(normalized["failed_stage"], "A6")
+        self.assertTrue(normalized.get("finished_at"))
+        self.assertTrue(any("auto-finalized as failed" in msg for msg in normalized.get("errors", [])))
+
+    def test_finalize_stalled_manifest_keeps_recent_running_state(self) -> None:
+        manifest = {
+            "run_id": "api-job-fresh",
+            "status": "running",
+            "current_stage": "A6",
+            "completed_stages": ["A0", "A1", "A2", "A3", "A4", "A5", "A6"],
+            "stages": [
+                {"stage": "A6", "status": "completed"},
+            ],
+            "errors": [],
+        }
+
+        normalized, changed = _finalize_stalled_manifest_if_needed(manifest, stale_seconds=30.0)
+
+        self.assertFalse(changed)
+        self.assertEqual(normalized["status"], "running")
 
 
 if __name__ == "__main__":

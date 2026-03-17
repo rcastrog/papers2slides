@@ -17,6 +17,7 @@ from app.services.run_inspector import RunInspector
 from app.storage.run_manager import RunManager
 
 router = APIRouter(tags=["runs"])
+_STALLED_RUNNING_SECONDS = 300
 
 
 @router.get("/runs/{run_id}", response_model=RunStatusResponse)
@@ -24,7 +25,8 @@ def get_run_status(run_id: str) -> RunStatusResponse:
     """Return current run status from run manifest (source of truth)."""
     run_path = _resolve_run_path(run_id)
 
-    manifest = _load_json(run_path / "logs" / "run_manifest.json")
+    manifest_path = run_path / "logs" / "run_manifest.json"
+    manifest = _load_json(manifest_path)
     if manifest is None:
         workflow_summary = _load_json(run_path / "logs" / "workflow_summary.json")
         if workflow_summary is None:
@@ -39,6 +41,16 @@ def get_run_status(run_id: str) -> RunStatusResponse:
             "artifacts": workflow_summary.get("final_output_paths_after_repair", {}),
             "checkpoint_state": {},
         }
+    else:
+        stale_seconds = _manifest_age_seconds(manifest_path)
+        normalized_manifest, updated = _finalize_stalled_manifest_if_needed(
+            manifest,
+            stale_seconds=stale_seconds,
+        )
+        if updated:
+            run_manager = _resolve_run_manager(run_path)
+            run_manager.save_json("logs/run_manifest.json", normalized_manifest)
+        manifest = normalized_manifest
 
     audit_findings_count = _count_audit_findings(run_path)
     warnings = manifest.get("warnings", [])
@@ -333,3 +345,52 @@ def _resolve_child_path(*, base_dir: Path, candidate_path: str, run_path: Path) 
     if not candidate.is_file():
         return None
     return candidate
+
+
+def _manifest_age_seconds(manifest_path: Path) -> float:
+    if not manifest_path.is_file():
+        return 0.0
+    modified = datetime.fromtimestamp(manifest_path.stat().st_mtime, tz=UTC)
+    return max(0.0, (datetime.now(UTC) - modified).total_seconds())
+
+
+def _finalize_stalled_manifest_if_needed(manifest: dict[str, Any], *, stale_seconds: float) -> tuple[dict[str, Any], bool]:
+    status = str(manifest.get("status", "")).strip().lower()
+    if status != "running":
+        return manifest, False
+
+    current_stage = str(manifest.get("current_stage", "")).strip()
+    completed_stages = manifest.get("completed_stages", [])
+    if not isinstance(completed_stages, list):
+        completed_stages = []
+
+    stage_entries = manifest.get("stages", [])
+    if not isinstance(stage_entries, list):
+        stage_entries = []
+
+    has_running_entry = any(
+        isinstance(entry, dict) and str(entry.get("status", "")).strip().lower() == "running"
+        for entry in stage_entries
+    )
+    current_is_completed = bool(current_stage) and current_stage in completed_stages
+
+    if stale_seconds < _STALLED_RUNNING_SECONDS or has_running_entry or not current_is_completed:
+        return manifest, False
+
+    updated = dict(manifest)
+    errors = updated.get("errors", [])
+    if not isinstance(errors, list):
+        errors = []
+
+    stall_message = (
+        f"Run auto-finalized as failed after stalling post-{current_stage} "
+        f"for {int(stale_seconds)}s without stage progress."
+    )
+    if stall_message not in errors:
+        errors.append(stall_message)
+
+    updated["errors"] = errors
+    updated["status"] = "failed"
+    updated["failed_stage"] = current_stage or "unknown"
+    updated["finished_at"] = datetime.now(UTC).isoformat()
+    return updated, True
