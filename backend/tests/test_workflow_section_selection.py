@@ -1433,7 +1433,44 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
         added_slide = updated.slides[1]
         self.assertIn("Detalle de apoyo", added_slide.title)
         self.assertEqual(added_slide.citations[0].short_citation, "Articulo fuente")
-        self.assertTrue(any("Esta diapositiva de apoyo" in point for point in added_slide.key_points))
+        self.assertTrue(any("evidencia adicional" in point.lower() for point in added_slide.key_points))
+        self.assertEqual(len(added_slide.key_points), len(set(added_slide.key_points)))
+
+    def test_spanish_plan_localizes_english_key_points(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "result",
+                    "title": "Key findings",
+                    "objective": "Show impact",
+                    "key_points": [
+                        "Observed Exposure quantifies the gap between theoretical AI capabilities and actual usage in professional settings.",
+                        "A new measure of AI displacement risk.",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                }
+            ],
+            target_count=1,
+            language="es",
+        )
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=[],
+            target_slide_count=1,
+        )
+
+        slide = updated.slides[0]
+        self.assertEqual(slide.title, "Resultados clave")
+        self.assertTrue(all("Observed Exposure" not in point for point in slide.key_points))
+        self.assertTrue(any("exposicion observada" in point.lower() for point in slide.key_points))
 
     def test_backfill_adds_unique_suffix_when_same_section_repeats(self) -> None:
         plan = self._build_plan(

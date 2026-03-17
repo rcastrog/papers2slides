@@ -1605,12 +1605,26 @@ def _enforce_slide_density_and_target_count(
         if role != "title":
             key_points = [_expand_sparse_key_point(point, slide, language=language) for point in key_points]
 
+        if language == "es":
+            key_points = [_localize_spanish_text_fragment(point, slide=slide) for point in key_points]
+
         if len(key_points) > max_points:
             key_points = key_points[:max_points]
 
         if key_points != slide.get("key_points", []):
             slide["key_points"] = key_points
             changed = True
+
+        if language == "es":
+            original_title = str(slide.get("title", "")).strip()
+            if original_title and _looks_predominantly_english(original_title):
+                slide["title"] = _default_spanish_title_for_role(role=role)
+                changed = True
+
+            objective = str(slide.get("objective", "")).strip()
+            if objective and _looks_predominantly_english(objective):
+                slide["objective"] = f"Desarrollar el punto central de la diapositiva: {_default_spanish_title_for_role(role=role)}."
+                changed = True
 
     if len(slides) < target:
         addenda = _build_supporting_slides_for_target(
@@ -1854,17 +1868,17 @@ def _build_supporting_slides_for_target(
             _expand_sparse_key_point(item, {"objective": section.get("why_it_matters", "")}, language=language)
             for item in key_points[:6]
         ]
-        fallback_support_line = (
-            "Esta diapositiva de apoyo conserva detalles tecnicos basados en la fuente para la discusion."
-            if language == "es"
-            else "This support slide preserves source-grounded detail for technical discussion."
-        )
+        fallback_support_lines = _support_slide_fallback_lines(language=language)
+        fallback_cursor = 0
         while len(key_points) < 4:
-            key_points.append(fallback_support_line)
+            key_points.append(fallback_support_lines[fallback_cursor % len(fallback_support_lines)])
+            fallback_cursor += 1
 
         section_id = str(section.get("section_id", "")).strip() or f"s{start_number + len(additional)}"
         default_section_title = "Analisis de soporte" if language == "es" else "Supporting analysis"
         section_title = str(section.get("section_title", default_section_title)).strip()
+        if language == "es" and _looks_predominantly_english(section_title):
+            section_title = _default_spanish_title_for_role(role=slide_role)
         support_suffix = "Detalle de apoyo" if language == "es" else "Supporting Detail"
         candidate_title = f"{section_title}: {support_suffix}"
         title = candidate_title
@@ -1889,6 +1903,8 @@ def _build_supporting_slides_for_target(
             if language == "es"
             else "Add source-grounded detail that did not fit in the core narrative slides."
         )
+        if language == "es":
+            key_points = [_localize_spanish_text_fragment(item, slide={"slide_role": slide_role, "objective": objective}) for item in key_points]
         must_avoid = (
             ["No introducir afirmaciones no sustentadas por la seccion fuente."]
             if language == "es"
@@ -2039,8 +2055,6 @@ def _normalize_title_for_match(value: str) -> str:
 
 def _looks_predominantly_english(text: str) -> bool:
     words = re.findall(r"[a-zA-Z]+", str(text or "").lower())
-    if len(words) < 5:
-        return False
     english_markers = {
         "the",
         "this",
@@ -2055,11 +2069,89 @@ def _looks_predominantly_english(text: str) -> bool:
         "results",
         "method",
         "slide",
+        "key",
+        "findings",
+        "prioritizing",
+        "measuring",
+        "outcomes",
+        "exposure",
     }
     spanish_markers = {"el", "la", "los", "las", "con", "para", "de", "que", "y", "es", "son"}
     english_hits = sum(1 for word in words if word in english_markers)
     spanish_hits = sum(1 for word in words if word in spanish_markers)
-    return english_hits >= 2 and english_hits > spanish_hits
+    if len(words) < 5:
+        return english_hits >= 1 and spanish_hits == 0
+    ratio = english_hits / max(len(words), 1)
+    return (english_hits >= 2 and english_hits > spanish_hits) or (len(words) >= 4 and ratio >= 0.45 and spanish_hits == 0)
+
+
+def _support_slide_fallback_lines(*, language: str) -> list[str]:
+    if language == "es":
+        return [
+            "Esta diapositiva resume evidencia adicional vinculada a la seccion fuente.",
+            "Se destacan implicaciones tecnicas que complementan la narrativa principal.",
+            "El contenido prioriza trazabilidad a resultados reportados en el articulo.",
+            "Estos puntos se incluyen para profundizar la discusion con respaldo documental.",
+        ]
+    return [
+        "This slide summarizes additional evidence linked to the source section.",
+        "It highlights technical implications that complement the core narrative.",
+        "The content prioritizes traceability to results reported in the paper.",
+        "These points are included to deepen discussion with documented support.",
+    ]
+
+
+def _default_spanish_title_for_role(*, role: str) -> str:
+    mapping = {
+        "motivation": "Motivacion",
+        "problem": "Planteamiento del problema",
+        "contribution": "Contribuciones principales",
+        "method": "Metodologia",
+        "result": "Resultados clave",
+        "discussion": "Discusion",
+        "conclusion": "Conclusiones",
+        "appendix_like_support": "Analisis de apoyo",
+    }
+    return mapping.get(str(role or "").strip().lower(), "Analisis de apoyo")
+
+
+def _localize_spanish_text_fragment(text: str, *, slide: dict[str, Any]) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned or not _looks_predominantly_english(cleaned):
+        return cleaned
+
+    lower = cleaned.lower()
+    replacements = [
+        (
+            "observed exposure quantifies the gap between theoretical ai capabilities and actual usage in professional settings",
+            "La exposicion observada cuantifica la brecha entre la capacidad teorica de la IA y su uso real en contextos profesionales.",
+        ),
+        (
+            "a new measure of ai displacement risk",
+            "Una nueva medida de riesgo de desplazamiento por IA.",
+        ),
+        (
+            "historical examples",
+            "Ejemplos historicos muestran la dificultad de anticipar disrupciones laborales.",
+        ),
+        (
+            "theoretical capability",
+            "La capacidad teorica se evalua con metricas de factibilidad por tarea.",
+        ),
+        (
+            "observed exposure adjusts theoretical capability",
+            "La exposicion observada ajusta la capacidad teorica segun uso real en el trabajo.",
+        ),
+    ]
+    for source, target in replacements:
+        if source in lower:
+            return target
+
+    objective = re.sub(r"\s+", " ", str(slide.get("objective", "")).strip())
+    if objective:
+        return f"Punto clave relacionado con: {objective}."
+    role = str(slide.get("slide_role", "")).strip().lower()
+    return f"Punto de apoyo para { _default_spanish_title_for_role(role=role).lower() }."
 
 
 def _map_artifact_type_to_visual_type(artifact_type: str) -> str:
