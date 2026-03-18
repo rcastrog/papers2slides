@@ -1,15 +1,17 @@
 ---
-title: Paper2Slides Project Handoff (2026-03-16)
+title: Paper2Slides Project Handoff (2026-03-18)
 description: Ready-to-paste context for starting a new chat without losing project state
 author: GitHub Copilot
-ms.date: 2026-03-16
+ms.date: 2026-03-18
 ms.topic: reference
 keywords:
   - paper2slides
   - handoff
   - workflow
   - retrieval
-estimated_reading_time: 6
+  - audit
+  - ui
+estimated_reading_time: 7
 ---
 
 ## Copy-Paste Starter for a New Chat
@@ -19,12 +21,12 @@ Project: paper2slides
 Goal: Convert an academic paper PDF into faithful presentation outputs (Reveal + PPTX) with citations and safety audit.
 
 Current focus:
-1) Improve reference retrieval recall while keeping strict grounding (retrieved means local PDF exists).
-2) Keep citation policy conservative and source-grounded.
-3) Preserve UI control for max_slides_per_reference.
+1) Keep citation policy strict and prevent post-repair citation loss.
+2) Improve run-status usability (clear warning explanation, repetitive-content summary, quick output actions).
+3) Continue retrieval reliability work while preserving strict grounding (retrieved means local PDF exists).
 
-Most recent validated result:
-- Same-paper comparison improved retrieval from 24/42 to 29/42 after deterministic recovery + broader provider search/retries.
+Latest shipped commit on main:
+- 4075c6e16ecaf6380b77eaae5b88b77406ad9b9d
 
 Please continue from PROJECT_HANDOFF_2026-03-16.md and prioritize unresolved items.
 ```
@@ -60,66 +62,81 @@ Key frontend folders:
 
 ## What Is Working
 
-1. Real workflow execution (Azure OpenAI mode) runs end-to-end.
-2. Reference retrieval hardening has been implemented and tested.
-3. Reference integrity policy is active:
-- A reference marked retrieved must have a verifiable local PDF artifact.
-- Otherwise it is downgraded to not_found.
-4. Deterministic post-A4 recovery is active:
-- Unresolved references are retried with provider-based PDF retrieval.
-- Successful downloads are promoted to retrieved.
-5. Broader retrieval search is active:
-- Higher arXiv/OpenAlex attempts and candidate breadth.
-- OpenAlex fetch now retries with longer timeout.
-6. Targeted retrieval integrity tests pass:
-- backend/tests/test_workflow_reference_integrity.py -> 14 passed.
+1. Real workflow execution (Azure OpenAI mode) runs end to end.
+2. Retrieval hardening remains in place and preserves strict retrieved/not_found semantics.
+3. Repair-on-audit now defaults to enabled across UI and backend defaults.
+4. Citation repair logic now adds or preserves reference_paper citations on citation_issue slides.
+5. Run Status now shows:
+   - AI-style warning summary
+   - Repetitiveness summary
+   - Open Deck action in addition to Open Reveal
+6. Frontend build and targeted backend audit tests pass after recent changes.
 
 ## Most Recent Measured Impact
 
-Same source paper comparison:
+Retrieval baseline remains useful for benchmarking:
+
 - Baseline run: backend/runs/safety-1706-03762v7_20260314_001226
   - total 42
   - retrieved 24
   - not_found 18
-- Latest run: backend/runs/safety-1706-03762v7_20260316_154445
+- Improved run: backend/runs/safety-1706-03762v7_20260316_154445
   - total 42
   - retrieved 29
   - not_found 13
 
-Delta:
+Delta remains:
+
 - retrieved +5
 - not_found -5
 
 ## Recent Changes of Interest
 
 Backend:
+
 - backend/app/orchestrator/workflow.py
-  - Added deterministic recovery pass after A4 coverage guard.
-  - Increased provider search breadth constants.
-  - Added OpenAlex retrying fetch behavior.
-- backend/tests/test_workflow_reference_integrity.py
-  - Added tests for deterministic recovery success/failure paths.
+  - Citation repair now enforces reference_paper insertion on citation_issue slides.
+  - Added text-pattern extraction for author/year mentions when repairing citations.
+  - Default repair_on_audit is now true in workflow entry points and CLI default.
+- backend/app/api/routes/jobs.py
+  - Multipart and workflow-launch defaults now assume repair_on_audit=true when omitted.
+- backend/app/api/routes/runs.py
+  - Retry fallback now defaults repair_on_audit to true when missing from metadata.
+- backend/app/api/schemas.py
+  - JobSubmissionRequest default repair_on_audit set to true.
+- backend/tests/test_workflow_audit_guard.py
+  - Added regression test for citation repair insertion behavior.
 
 Frontend:
-- frontend/components/job-form.tsx
-- frontend/lib/api.ts
 
-Note:
-- Workspace currently contains many other modified/untracked files not all related to retrieval work.
+- frontend/components/job-form.tsx
+  - Run repair-on-audit checkbox default set to on.
+- frontend/components/run-status.tsx
+  - Added warnings explanation summary.
+  - Added repetitiveness summary from repetition metrics.
+  - Moved action controls and action hints to bottom.
+  - Added Open Deck button.
+- frontend/lib/api.ts
+  - Existing wiring reused for repetition metrics and run status data.
+
+Git status note:
+
+- Latest feature commit has been pushed to main: 4075c6e.
+- Some local untracked files may still exist in workspace depending on machine state.
 
 ## Known Issues / Risks
 
-1. PPTX build can fail in some runs due missing template package path:
-- python-pptx template error reported in latest run warnings.
-2. Bibliography parsing quality is still a bottleneck on messy references sections.
-3. Coverage guard can synthesize missing entries when A4 batch output is incomplete; this preserves coverage but quality still depends on downstream retrieval success.
+1. Citation guard failures can still appear in difficult runs if external-work mentions are generated without robust mapped reference support.
+2. Bibliography parsing quality remains a bottleneck on messy references pages.
+3. Coverage guard synthesis in A4 preserves reference IDs but does not guarantee retrievability.
+4. Local development frequently hits port 8000 conflicts when launching backend.
 
 ## Pending / Suggested Next Steps
 
-1. Fix PPTX template/runtime issue so A10 is consistently healthy.
-2. Improve bibliography detection and split heuristics for difficult references pages.
-3. Add one metrics summary artifact per run (precision/recall-oriented retrieval telemetry).
-4. Optional: run the same benchmark paper multiple times to check stability and variance of retrieval counts.
+1. Validate citation-repair fix with a fresh end-to-end run on the previously problematic paper and verify A11 no longer fails for slide-level external-reference guard.
+2. Add explicit telemetry artifact for citation guard outcomes before/after repair.
+3. Improve bibliography parsing and split heuristics for difficult references sections.
+4. Add a quick health command or script for freeing/diagnosing port 8000 during local development.
 
 ## Useful Commands
 
@@ -135,9 +152,22 @@ Run targeted retrieval tests:
 Set-Location backend; & "C:/Users/ricastro/OneDrive - Microsoft/paper2slides/.venv/Scripts/python.exe" -m pytest tests/test_workflow_reference_integrity.py -q
 ```
 
+Run targeted citation/audit tests:
+
+```powershell
+Set-Location backend; & "C:/Users/ricastro/OneDrive - Microsoft/paper2slides/.venv/Scripts/python.exe" -m pytest tests/test_workflow_audit_guard.py -q
+```
+
+Build frontend:
+
+```powershell
+Set-Location frontend; npm run build
+```
+
 ## Definition of Done for the Next Chat
 
 A good next checkpoint should include:
-1. Stable retrieval improvement confirmed on at least one benchmark run.
-2. PPTX stage passing without template failures.
-3. Clear report of total references, retrieved, not_found, and why unresolved references remain.
+
+1. One fresh benchmark run showing audit status completed or completed_with_warnings without high-severity citation guard failures.
+2. Clear report of total references, retrieved, not_found, and reasons for unresolved references.
+3. Confirmation that Run Status warning and repetitiveness summaries match artifact truth for that run.
