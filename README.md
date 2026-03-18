@@ -86,13 +86,13 @@ Deterministic benchmark run:
 From repository root:
 
 ```powershell
-Push-Location backend; & "C:/Users/ricastro/OneDrive - Microsoft/paper2slides/.venv/Scripts/python.exe" -m app.orchestrator.workflow --pdf "runs/safety-1706-03762v7_20260314_001226/source_paper/1706.03762v7.pdf"; Pop-Location
+Push-Location backend; & "../.venv/Scripts/python.exe" -m app.orchestrator.workflow --pdf "runs/safety-1706-03762v7_20260314_001226/source_paper/1706.03762v7.pdf"; Pop-Location
 ```
 
 Deterministic mode run:
 
 ```powershell
-Push-Location backend; $env:USE_MOCK_LLM='true'; & "C:/Users/ricastro/OneDrive - Microsoft/paper2slides/.venv/Scripts/python.exe" -m app.orchestrator.workflow --pdf "runs/safety-1706-03762v7_20260314_001226/source_paper/1706.03762v7.pdf"; Pop-Location
+Push-Location backend; $env:USE_MOCK_LLM='true'; & "../.venv/Scripts/python.exe" -m app.orchestrator.workflow --pdf "runs/safety-1706-03762v7_20260314_001226/source_paper/1706.03762v7.pdf"; Pop-Location
 ```
 
 Frontend build:
