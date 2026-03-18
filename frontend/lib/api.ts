@@ -47,6 +47,14 @@ export type RunStatusResponse = {
   fallback_stage_count: number;
   total_duration_ms?: number | null;
   job_summary?: Record<string, unknown>;
+  retrieval_summary?: {
+    total_references?: number;
+    retrieved_count?: number;
+    ambiguous_count?: number;
+    not_found_count?: number;
+    retrieved_requires_local_pdf?: boolean;
+    grounding_note?: string;
+  };
 };
 
 export type RunActionResponse = {

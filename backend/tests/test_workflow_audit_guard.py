@@ -250,7 +250,7 @@ class WorkflowAuditGuardTests(unittest.TestCase):
         citations = filtered.slides[0].citations
         ref_citations = [item for item in citations if item.source_kind == "reference_paper"]
         self.assertEqual(len(ref_citations), 1)
-        self.assertEqual(ref_citations[0].short_citation, "Reference R001 unresolved")
+        self.assertEqual(ref_citations[0].short_citation, "Author et al., 2020")
         support_ids = [item.support_id for item in filtered.slides[0].source_support if item.support_type == "reference_summary"]
         self.assertEqual(support_ids, ["R001"])
 
@@ -299,6 +299,105 @@ class WorkflowAuditGuardTests(unittest.TestCase):
 
         self.assertTrue(reference_citations)
         self.assertTrue(any("Citation coverage tightened in repair cycle." in warning for warning in repaired.global_warnings))
+
+    def test_keeps_variant_reference_label_when_it_maps_to_retrieved_entry(self) -> None:
+        plan = PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "technical_adjacent",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": 2,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "slide_role": "method",
+                        "title": "Method",
+                        "objective": "Explain method",
+                        "key_points": ["Uses prior work."],
+                        "must_avoid": [],
+                        "visuals": [
+                            {
+                                "visual_type": "text_only",
+                                "asset_id": "none",
+                                "source_origin": "none",
+                                "usage_mode": "none",
+                                "placement_hint": "center_focus",
+                                "why_this_visual": "text",
+                            }
+                        ],
+                        "source_support": [],
+                        "citations": [
+                            {"short_citation": "Eloundou et al. (2023)", "source_kind": "reference_paper"},
+                        ],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    }
+                ],
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+        reference_index = ReferenceIndex.model_validate(
+            {
+                "reference_index": [
+                    {
+                        "reference_id": "R001",
+                        "original_reference_text": "Eloundou et al. 2023",
+                        "parsed_reference": {
+                            "title": "Large Language Models and Labor",
+                            "authors": ["Tyna Eloundou"],
+                            "venue_or_source": "arXiv",
+                            "year": "2023",
+                            "arxiv_id": "2303.10130",
+                            "doi": "",
+                        },
+                        "parsing_confidence": "high",
+                        "retrieval_status": "retrieved",
+                        "matched_record": {
+                            "title": "Large Language Models and Labor",
+                            "authors": ["Tyna Eloundou"],
+                            "year": "2023",
+                            "source": "arxiv",
+                            "url": "https://arxiv.org/abs/2303.10130",
+                            "pdf_path": "C:/tmp/r001.pdf",
+                            "reference_folder_path": "C:/tmp/R001",
+                        },
+                        "match_confidence": "high",
+                        "alternative_candidates": [],
+                        "failure_reason": "",
+                        "notes": [],
+                    }
+                ],
+                "retrieval_summary": {
+                    "total_references": 1,
+                    "retrieved_count": 1,
+                    "ambiguous_count": 0,
+                    "not_found_count": 0,
+                    "warnings": [],
+                },
+            }
+        )
+
+        filtered = _enforce_retrieved_reference_citation_policy(
+            plan=plan,
+            reference_index=reference_index,
+        )
+
+        ref_citations = [item for item in filtered.slides[0].citations if item.source_kind == "reference_paper"]
+        self.assertEqual(len(ref_citations), 1)
+        self.assertEqual(ref_citations[0].short_citation, "Eloundou et al., 2023")
 
 
 if __name__ == "__main__":

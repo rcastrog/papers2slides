@@ -78,6 +78,7 @@ def get_run_status(run_id: str) -> RunStatusResponse:
     if global_warnings:
         stage_warnings.insert(0, {"stage": "run_global", "warnings": global_warnings})
     fallback_stage_count = sum(1 for stage in stage_entries if isinstance(stage, dict) and stage.get("fallback_used"))
+    retrieval_summary = _load_retrieval_summary(run_path)
 
     return RunStatusResponse(
         run_id=manifest.get("run_id", run_id),
@@ -95,6 +96,7 @@ def get_run_status(run_id: str) -> RunStatusResponse:
         fallback_stage_count=fallback_stage_count,
         total_duration_ms=manifest.get("duration_ms"),
         job_summary=(manifest.get("run_summary", {}) or {}).get("job_summary", {}),
+        retrieval_summary=retrieval_summary,
     )
 
 
@@ -485,6 +487,36 @@ def _count_audit_findings(run_path: Path) -> int | None:
         audits = payload.get("slide_audits", [])
         return sum(len(item.get("findings", [])) for item in audits if isinstance(item, dict))
     return None
+
+
+def _load_retrieval_summary(run_path: Path) -> dict[str, Any]:
+    payload = _load_json(run_path / "references" / "reference_index.json")
+    if not isinstance(payload, dict):
+        return {}
+
+    summary = payload.get("retrieval_summary")
+    if isinstance(summary, dict):
+        total = int(summary.get("total_references", 0) or 0)
+        retrieved = int(summary.get("retrieved_count", 0) or 0)
+        ambiguous = int(summary.get("ambiguous_count", 0) or 0)
+        not_found = int(summary.get("not_found_count", 0) or 0)
+    else:
+        entries = payload.get("reference_index", [])
+        if not isinstance(entries, list):
+            return {}
+        total = len(entries)
+        retrieved = sum(1 for item in entries if isinstance(item, dict) and str(item.get("retrieval_status", "")) == "retrieved")
+        ambiguous = sum(1 for item in entries if isinstance(item, dict) and str(item.get("retrieval_status", "")) == "ambiguous_match")
+        not_found = sum(1 for item in entries if isinstance(item, dict) and str(item.get("retrieval_status", "")) == "not_found")
+
+    return {
+        "total_references": max(0, total),
+        "retrieved_count": max(0, retrieved),
+        "ambiguous_count": max(0, ambiguous),
+        "not_found_count": max(0, not_found),
+        "retrieved_requires_local_pdf": True,
+        "grounding_note": "Retrieved means a local PDF artifact was verified in this run.",
+    }
 
 
 def _resolve_child_path(*, base_dir: Path, candidate_path: str, run_path: Path) -> Path | None:

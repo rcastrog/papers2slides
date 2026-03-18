@@ -748,7 +748,7 @@ def run_workflow(
     run_manager.save_json("references/retrieval_candidates.json", {"candidates": retrieval_candidates})
 
     initial_sections_for_analysis = section_candidates[: max(1, min(3, len(section_candidates)))]
-    references_for_summary = reference_parse_output.references_raw[:3]
+    references_for_summary = reference_parse_output.references_raw
 
     llm_client = _build_workflow_llm_client(
         llm_settings=llm_settings,
@@ -902,6 +902,7 @@ def run_workflow(
             references_raw=reference_parse_output.references_raw,
             reference_parse_warnings=reference_parse_output.warnings,
             retrieval_candidates=retrieval_candidates,
+            enable_batching=llm_mode != "mocked",
         ),
         input_artifacts=["references/reference_parse_output.json", "references/retrieval_candidates.json"],
         output_artifacts=["references/reference_index.json"],
@@ -1201,7 +1202,11 @@ def run_workflow(
                 repair_agents_ran.append("CitationRepairAgent")
                 citation_repair = citation_repair_agent.run({"audit_report": initial_audit.model_dump(), "presentation_plan": local_presentation_plan.model_dump()})
                 run_manager.save_json("audit/repairs/citation_repair.json", citation_repair.model_dump())
-                local_presentation_plan = _apply_citation_repairs(local_presentation_plan, initial_audit)
+                local_presentation_plan = _apply_citation_repairs(
+                    local_presentation_plan,
+                    initial_audit,
+                    reference_index=reference_index_result,
+                )
 
             if "visual" in needed_repairs:
                 repair_agents_ran.append("VisualRepairAgent")
@@ -1685,7 +1690,12 @@ def _apply_slide_repairs(plan: PresentationPlan, audit_report: AuditReport) -> P
     return PresentationPlan.model_validate(payload)
 
 
-def _apply_citation_repairs(plan: PresentationPlan, audit_report: AuditReport) -> PresentationPlan:
+def _apply_citation_repairs(
+    plan: PresentationPlan,
+    audit_report: AuditReport,
+    *,
+    reference_index: ReferenceIndex | None = None,
+) -> PresentationPlan:
     citation_slides = {
         audit.slide_number
         for audit in audit_report.slide_audits
@@ -1695,6 +1705,13 @@ def _apply_citation_repairs(plan: PresentationPlan, audit_report: AuditReport) -
 
     payload = plan.model_dump()
     fallback_reference_labels = _collect_reference_citation_labels(payload)
+    retrieved_candidates = _build_retrieved_reference_candidates(reference_index)
+    if retrieved_candidates:
+        fallback_reference_labels = [
+            str(candidate.get("short_citation", "")).strip()
+            for candidate in retrieved_candidates
+            if str(candidate.get("short_citation", "")).strip()
+        ]
     repaired_slide_count = 0
 
     for slide in payload["slides"]:
@@ -1724,6 +1741,12 @@ def _apply_citation_repairs(plan: PresentationPlan, audit_report: AuditReport) -
         extracted_labels = _extract_reference_mentions_from_slide(slide)
         appended = 0
         for label in extracted_labels:
+            resolved_label = _resolve_retrieved_reference_citation_label(
+                label,
+                retrieved_candidates,
+            )
+            if resolved_label:
+                label = resolved_label
             key = label.lower()
             if key in existing_labels:
                 continue
@@ -3028,15 +3051,21 @@ def _enforce_retrieved_reference_citation_policy(
     if not isinstance(slides, list) or not slides:
         return plan
 
+    retrieved_candidates = _build_retrieved_reference_candidates(reference_index)
     retrieved_ids = {
-        entry.reference_id
-        for entry in reference_index.reference_index
-        if str(entry.retrieval_status) == "retrieved"
+        str(candidate.get("reference_id", "")).strip().upper()
+        for candidate in retrieved_candidates
+        if str(candidate.get("reference_id", "")).strip()
     }
-    retrieved_labels = {
-        _build_reference_citation_signature_from_entry(entry=entry)[0].strip().lower()
-        for entry in reference_index.reference_index
-        if str(entry.retrieval_status) == "retrieved"
+    retrieved_label_map = {
+        str(candidate.get("short_key", "")).strip(): str(candidate.get("short_citation", "")).strip()
+        for candidate in retrieved_candidates
+        if str(candidate.get("short_key", "")).strip() and str(candidate.get("short_citation", "")).strip()
+    }
+    retrieved_id_map = {
+        str(candidate.get("reference_id", "")).strip().upper(): str(candidate.get("short_citation", "")).strip()
+        for candidate in retrieved_candidates
+        if str(candidate.get("reference_id", "")).strip() and str(candidate.get("short_citation", "")).strip()
     }
 
     changed = False
@@ -3061,9 +3090,29 @@ def _enforce_retrieved_reference_citation_policy(
                 short_citation = str(citation.get("short_citation", "")).strip()
                 reference_id_match = _REFERENCE_ID_PATTERN.search(short_citation)
                 reference_id = reference_id_match.group(0).upper() if reference_id_match else ""
-                short_key = short_citation.lower()
+                short_key = _normalize_citation_label_key(short_citation)
 
-                if (reference_id and reference_id in retrieved_ids) or (short_key and short_key in retrieved_labels):
+                if reference_id and reference_id in retrieved_ids:
+                    canonical = retrieved_id_map.get(reference_id, short_citation)
+                    if canonical and canonical != short_citation:
+                        citation["short_citation"] = canonical
+                        changed = True
+                    filtered_citations.append(citation)
+                    continue
+
+                direct_match = retrieved_label_map.get(short_key)
+                if direct_match:
+                    if direct_match != short_citation:
+                        citation["short_citation"] = direct_match
+                        changed = True
+                    filtered_citations.append(citation)
+                    continue
+
+                resolved_label = _resolve_retrieved_reference_citation_label(short_citation, retrieved_candidates)
+                if resolved_label:
+                    if resolved_label != short_citation:
+                        citation["short_citation"] = resolved_label
+                        changed = True
                     filtered_citations.append(citation)
                     continue
 
@@ -3121,6 +3170,117 @@ def _build_reference_normalization_candidates(reference_index: ReferenceIndex) -
             }
         )
     return candidates
+
+
+def _build_retrieved_reference_candidates(reference_index: ReferenceIndex | None) -> list[dict[str, Any]]:
+    if reference_index is None:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    for entry in reference_index.reference_index:
+        if str(entry.retrieval_status) != "retrieved":
+            continue
+
+        short_citation, tokens = _build_reference_citation_signature_from_entry(entry=entry)
+        short_citation = str(short_citation).strip()
+        if not short_citation:
+            continue
+
+        year = str(entry.parsed_reference.year or "").strip().lower() if entry.parsed_reference else ""
+        surnames: set[str] = set()
+        if entry.parsed_reference:
+            for author in list(entry.parsed_reference.authors)[:2]:
+                surname = str(author).strip().split(" ")[-1].lower()
+                surname = re.sub(r"[^a-z0-9]", "", surname)
+                if surname:
+                    surnames.add(surname)
+
+        candidate_tokens = set(tokens)
+        candidate_tokens.update(surnames)
+        if year:
+            candidate_tokens.add(year)
+
+        candidates.append(
+            {
+                "reference_id": str(entry.reference_id).strip().upper(),
+                "short_citation": short_citation,
+                "short_key": _normalize_citation_label_key(short_citation),
+                "tokens": candidate_tokens,
+                "year": year,
+                "surnames": surnames,
+            }
+        )
+
+    return candidates
+
+
+def _normalize_citation_label_key(value: str) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+
+    text = text.replace("(", " ").replace(")", " ")
+    text = re.sub(r"\bet\s+al\b", "et al", text)
+    text = re.sub(r"[^a-z0-9&\s,]", " ", text)
+    text = re.sub(r"\s*&\s*", " & ", text)
+    text = re.sub(r"\s*,\s*", ", ", text)
+    text = re.sub(r"\s+", " ", text).strip(" ,.;:")
+    return text
+
+
+def _resolve_retrieved_reference_citation_label(
+    citation_text: str,
+    retrieved_candidates: list[dict[str, Any]],
+) -> str | None:
+    text = _normalize_citation_label_key(citation_text)
+    if not text or not retrieved_candidates:
+        return None
+
+    years = set(match.lower() for match in _YEAR_PATTERN.findall(text))
+    text_tokens = set(re.findall(r"[a-z0-9]+", text))
+
+    best_candidate: dict[str, Any] | None = None
+    best_score = 0
+
+    for candidate in retrieved_candidates:
+        candidate_year = str(candidate.get("year", "")).strip().lower()
+        if years and candidate_year and candidate_year not in years:
+            continue
+
+        candidate_tokens = {
+            str(token).lower()
+            for token in candidate.get("tokens", set())
+            if str(token).strip()
+        }
+        if not candidate_tokens:
+            continue
+
+        token_overlap = len(text_tokens & candidate_tokens)
+        surname_overlap = len(
+            {
+                str(token).lower()
+                for token in candidate.get("surnames", set())
+                if str(token).strip()
+            }
+            & text_tokens
+        )
+        if surname_overlap == 0:
+            continue
+
+        score = token_overlap + surname_overlap
+        if years and candidate_year:
+            score += 1
+
+        if score > best_score:
+            best_score = score
+            best_candidate = candidate
+
+    if best_candidate is None:
+        return None
+    if best_score < 2:
+        return None
+
+    return str(best_candidate.get("short_citation", "")).strip() or None
 
 
 def _build_reference_citation_signature_from_entry(*, entry: Any) -> tuple[str, set[str]]:
@@ -3864,10 +4024,11 @@ def _run_reference_retrieval_with_batches(
     references_raw: list[str],
     reference_parse_warnings: list[str],
     retrieval_candidates: list[dict[str, Any]],
+    enable_batching: bool = True,
 ) -> ReferenceIndex:
     """Run A4 retrieval in chunks for long bibliographies and merge the results."""
     total_references = len(references_raw)
-    if total_references <= _A4_BATCH_TRIGGER_COUNT:
+    if not enable_batching or total_references <= _A4_BATCH_TRIGGER_COUNT:
         return reference_retrieval_agent.run(
             {
                 "job_spec": job_spec_payload,
@@ -4935,7 +5096,18 @@ def _build_fake_responses(
         },
     ]
 
-    for section_candidate in sections_for_analysis:
+    parsed_titles_for_mock = [
+        str(item.get("section_title", "")).strip()
+        for item in section_index_payload
+        if isinstance(item, dict)
+    ]
+    predicted_sections_for_analysis = _select_sections_for_analysis(
+        full_text=pdf_parse_output.combined_text,
+        parsed_section_titles=parsed_titles_for_mock,
+        fallback_candidates=sections_for_analysis,
+    )
+
+    for section_candidate in predicted_sections_for_analysis:
         base_responses.append(
             {
                 "section_id": section_candidate.section_title.lower().replace(" ", "_")[:24] or "section",
@@ -5016,7 +5188,7 @@ def _build_fake_responses(
         }
     )
 
-    for idx in range(len(reference_entries[:3])):
+    for idx in range(len(reference_entries)):
         base_responses.append(
             {
                 "reference_id": f"R{idx + 1:03d}",

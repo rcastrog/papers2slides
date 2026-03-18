@@ -46,6 +46,7 @@ class RunStatusResponse(BaseModel):
     fallback_stage_count: int = 0
     total_duration_ms: int | None = None
     job_summary: dict[str, Any] = Field(default_factory=dict)
+    retrieval_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunResultsResponse(BaseModel):

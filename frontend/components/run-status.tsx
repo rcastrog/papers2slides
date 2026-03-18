@@ -169,7 +169,10 @@ export function RunStatus({ runId }: RunStatusProps) {
 
   const summary = status?.job_summary;
   const warningSummary = useMemo(() => buildWarningsSummary(status), [status]);
+  const warningInsights = useMemo(() => buildWarningInsights(status), [status]);
   const repetitionSummary = useMemo(() => buildRepetitionSummary(repetitionMetrics), [repetitionMetrics]);
+  const repetitionHighlights = useMemo(() => buildRepetitionHighlights(repetitionMetrics), [repetitionMetrics]);
+  const retrievalSummary = status?.retrieval_summary;
 
   return (
     <div className="card stack">
@@ -190,7 +193,18 @@ export function RunStatus({ runId }: RunStatusProps) {
           <div>Total duration: {status?.total_duration_ms != null ? `${status.total_duration_ms} ms` : "n/a"}</div>
           <div>Warnings count: {status?.warning_count ?? 0}</div>
           <div>Audit findings count: {status?.audit_findings_count ?? "n/a"}</div>
+          <div>
+            Retrieval: {String(retrievalSummary?.retrieved_count ?? 0)} / {String(retrievalSummary?.total_references ?? 0)} verified
+          </div>
+          <div>
+            Retrieval unresolved: {String(retrievalSummary?.not_found_count ?? 0)} (ambiguous: {String(retrievalSummary?.ambiguous_count ?? 0)})
+          </div>
         </div>
+        {retrievalSummary?.grounding_note ? (
+          <div className="muted" style={{ overflowWrap: "anywhere" }}>
+            {String(retrievalSummary.grounding_note)}
+          </div>
+        ) : null}
       </div>
 
       <div className="two-up">
@@ -231,9 +245,27 @@ export function RunStatus({ runId }: RunStatusProps) {
         <div className="muted" style={{ overflowWrap: "anywhere" }}>
           AI summary: {warningSummary}
         </div>
+        {warningInsights.length > 0 ? (
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {warningInsights.map((insight, index) => (
+              <li key={`insight-${index}`} style={{ marginBottom: 6, overflowWrap: "anywhere" }}>
+                {insight}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <div className="muted" style={{ overflowWrap: "anywhere" }}>
           Repetitiveness summary: {repetitionSummary}
         </div>
+        {repetitionHighlights.length > 0 ? (
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {repetitionHighlights.map((item, index) => (
+              <li key={`repeat-${index}`} style={{ marginBottom: 6, overflowWrap: "anywhere" }}>
+                {item}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         {status?.stage_warnings && status.stage_warnings.length > 0 ? (
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             {status.stage_warnings.map((group, groupIndex) => (
@@ -269,28 +301,33 @@ export function RunStatus({ runId }: RunStatusProps) {
 
       {error ? <div className="error">{error}</div> : null}
 
-      <div className="top-links">
-        {canCancel ? (
-          <button className="btn-secondary" type="button" disabled={isCancelling} onClick={handleCancel}>
-            {isCancelling ? "Requesting cancel..." : "Stop run"}
+      <div className="panel stack">
+        <h3 className="section-title">Quick output actions</h3>
+        <div className="top-links">
+          {canCancel ? (
+            <button className="btn-secondary" type="button" disabled={isCancelling} onClick={handleCancel}>
+              {isCancelling ? "Requesting cancel..." : "Stop run"}
+            </button>
+          ) : null}
+          <button className="btn-secondary" type="button" disabled={!isCompleted || !hasRevealOutput} onClick={handleOpenReveal}>
+            Open Reveal
           </button>
-        ) : null}
-        <button className="btn-secondary" type="button" disabled={!isCompleted || !hasRevealOutput} onClick={handleOpenReveal}>
-          Open Reveal
-        </button>
-        <button className="btn-secondary" type="button" disabled={!isCompleted || !hasPptxOutput} onClick={handleOpenDeck}>
-          Open Deck
-        </button>
-        {canRecoverA11 ? (
-          <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
-            {isRecovering ? "Recovering..." : "Recover from A11"}
+          <button className="btn-secondary" type="button" disabled={!isCompleted || !hasPptxOutput} onClick={handleOpenDeck}>
+            Open Deck
           </button>
-        ) : null}
-        {canRetry ? (
-          <button className="btn-secondary" type="button" disabled={isRetrying} onClick={handleRetryRun}>
-            {isRetrying ? "Starting retry..." : "Retry run"}
-          </button>
-        ) : null}
+          {canRecoverA11 ? (
+            <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
+              {isRecovering ? "Recovering..." : "Recover from A11"}
+            </button>
+          ) : null}
+          {canRetry ? (
+            <button className="btn-secondary" type="button" disabled={isRetrying} onClick={handleRetryRun}>
+              {isRetrying ? "Starting retry..." : "Retry run"}
+            </button>
+          ) : null}
+          {isCompleted ? <Link href={`/results/${runId}`}>View results</Link> : null}
+          {isCompleted ? <Link href={`/inspect/${runId}`}>Inspect run</Link> : null}
+        </div>
       </div>
 
       <div className="panel stack">
@@ -320,12 +357,6 @@ export function RunStatus({ runId }: RunStatusProps) {
         ) : null}
       </div>
 
-      {isCompleted ? (
-        <div className="top-links">
-          <Link href={`/results/${runId}`}>View results</Link>
-          <Link href={`/inspect/${runId}`}>Inspect run</Link>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -369,6 +400,41 @@ function buildWarningsSummary(status: RunStatusResponse | null): string {
   return `Warnings were recorded across ${stageCount} stage(s). Priority focus: ${focus.join("; ")}.`;
 }
 
+function buildWarningInsights(status: RunStatusResponse | null): string[] {
+  if (!status) {
+    return [];
+  }
+
+  const grouped = status.stage_warnings ?? [];
+  const warnings = grouped.flatMap((group) => group.warnings);
+  const normalizedWarnings = warnings.length > 0 ? warnings : status.warnings;
+  if (!normalizedWarnings.length) {
+    return [];
+  }
+
+  const insights: string[] = [];
+  const hasCitationGuard = normalizedWarnings.some((warning) =>
+    warning.toLowerCase().includes("external-reference citation guard")
+  );
+  if (hasCitationGuard) {
+    insights.push("Citation guard triggered: add at least one retrieved reference-paper citation on each external-work slide.");
+  }
+
+  const retrieval = status.retrieval_summary;
+  if (retrieval && typeof retrieval.not_found_count === "number" && retrieval.not_found_count > 0) {
+    insights.push(
+      `Reference retrieval remains incomplete: ${retrieval.not_found_count} reference(s) unresolved and excluded from strict citation grounding.`
+    );
+  }
+
+  const hasVisualFallback = normalizedWarnings.some((warning) => warning.toLowerCase().includes("image generation disabled"));
+  if (hasVisualFallback) {
+    insights.push("Visual generation was disabled, so source-first or text-first fallbacks were used.");
+  }
+
+  return insights;
+}
+
 function buildRepetitionSummary(metrics: Record<string, unknown> | null): string {
   if (!metrics) {
     return "Repetition metrics are not available yet.";
@@ -394,10 +460,57 @@ function buildRepetitionSummary(metrics: Record<string, unknown> | null): string
   return segments.join("; ");
 }
 
+function buildRepetitionHighlights(metrics: Record<string, unknown> | null): string[] {
+  if (!metrics) {
+    return [];
+  }
+
+  const highlights: string[] = [];
+  const bullet = asRecord(metrics.bullet);
+  const slide = asRecord(metrics.slide);
+
+  const topBulletRepeats = asArrayOfRecords(bullet.top_exact_repeats);
+  if (topBulletRepeats.length > 0) {
+    const first = topBulletRepeats[0];
+    const text = String(first.text ?? "").trim();
+    const count = asNumber(first.count);
+    if (text) {
+      highlights.push(`Top repeated bullet (${count}x): ${truncateForSummary(text, 140)}`);
+    }
+  }
+
+  const topSlideRepeats = asArrayOfRecords(slide.top_exact_repeats);
+  if (topSlideRepeats.length > 0) {
+    const first = topSlideRepeats[0];
+    const text = String(first.text ?? "").trim();
+    const count = asNumber(first.count);
+    if (text) {
+      highlights.push(`Top repeated slide signature (${count}x): ${truncateForSummary(text, 140)}`);
+    }
+  }
+
+  return highlights;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function asArrayOfRecords(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"));
+}
+
+function truncateForSummary(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}...`;
 }
