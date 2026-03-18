@@ -562,7 +562,7 @@ def recover_a11_only(run_path: Path) -> dict[str, Any]:
 def run_workflow(
     pdf_path: Path,
     *,
-    repair_on_audit: bool = False,
+    repair_on_audit: bool = True,
     run_path: Path | None = None,
     workflow_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1412,7 +1412,7 @@ def run_workflow(
     return {"summary": summary, "results": results_summary, "manifest": final_manifest}
 
 
-def run_sequential_workflow(pdf_path: Path, *, repair_on_audit: bool = False) -> Path:
+def run_sequential_workflow(pdf_path: Path, *, repair_on_audit: bool = True) -> Path:
     """Backward-compatible wrapper returning only run path."""
     run_result = run_workflow(pdf_path, repair_on_audit=repair_on_audit)
     return Path(run_result["summary"]["run_path"])
@@ -1694,11 +1694,148 @@ def _apply_citation_repairs(plan: PresentationPlan, audit_report: AuditReport) -
     }
 
     payload = plan.model_dump()
+    fallback_reference_labels = _collect_reference_citation_labels(payload)
+    repaired_slide_count = 0
+
     for slide in payload["slides"]:
-        if slide["slide_number"] in citation_slides and not slide.get("citations"):
-            slide["citations"] = [{"short_citation": "Source paper", "source_kind": "source_paper"}]
+        if slide["slide_number"] not in citation_slides:
+            continue
+
+        citations = slide.get("citations", [])
+        if not isinstance(citations, list):
+            citations = []
+        slide["citations"] = citations
+
+        has_reference_citation = any(
+            isinstance(citation, dict)
+            and str(citation.get("source_kind", "")).strip() == "reference_paper"
+            and str(citation.get("short_citation", "")).strip()
+            for citation in citations
+        )
+        if has_reference_citation:
+            continue
+
+        existing_labels = {
+            str(citation.get("short_citation", "")).strip().lower()
+            for citation in citations
+            if isinstance(citation, dict) and str(citation.get("short_citation", "")).strip()
+        }
+
+        extracted_labels = _extract_reference_mentions_from_slide(slide)
+        appended = 0
+        for label in extracted_labels:
+            key = label.lower()
+            if key in existing_labels:
+                continue
+            citations.append(
+                {
+                    "short_citation": label,
+                    "source_kind": "reference_paper",
+                    "citation_purpose": "contextual_reference",
+                }
+            )
+            existing_labels.add(key)
+            appended += 1
+            if appended >= 2:
+                break
+
+        if appended == 0:
+            for label in fallback_reference_labels:
+                key = label.lower()
+                if key in existing_labels:
+                    continue
+                citations.append(
+                    {
+                        "short_citation": label,
+                        "source_kind": "reference_paper",
+                        "citation_purpose": "contextual_reference",
+                    }
+                )
+                appended = 1
+                break
+
+        if appended > 0:
+            repaired_slide_count += 1
+
     payload["global_warnings"] = payload.get("global_warnings", []) + ["Citation coverage tightened in repair cycle."]
+    if repaired_slide_count:
+        payload["global_warnings"].append(
+            f"Citation repair added reference-paper citations to {repaired_slide_count} slide(s)."
+        )
     return PresentationPlan.model_validate(payload)
+
+
+def _collect_reference_citation_labels(payload: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for slide in payload.get("slides", []):
+        if not isinstance(slide, dict):
+            continue
+        citations = slide.get("citations", [])
+        if not isinstance(citations, list):
+            continue
+        for citation in citations:
+            if not isinstance(citation, dict):
+                continue
+            if str(citation.get("source_kind", "")).strip() != "reference_paper":
+                continue
+            label = str(citation.get("short_citation", "")).strip()
+            if not label:
+                continue
+            key = label.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            labels.append(label)
+    return labels
+
+
+def _extract_reference_mentions_from_slide(slide: dict[str, Any]) -> list[str]:
+    text_parts: list[str] = []
+    for field in ("title", "objective"):
+        value = slide.get(field)
+        if isinstance(value, str) and value.strip():
+            text_parts.append(value)
+
+    for field in ("key_points", "speaker_note_hooks"):
+        entries = slide.get(field, [])
+        if isinstance(entries, list):
+            for item in entries:
+                if isinstance(item, str) and item.strip():
+                    text_parts.append(item)
+
+    text = "\n".join(text_parts)
+    if not text:
+        return []
+
+    labels: list[str] = []
+    seen: set[str] = set()
+
+    pair_pattern = re.compile(
+        r"\b([A-Z][A-Za-z'`-]+)\s*(?:and|&)\s*([A-Z][A-Za-z'`-]+)\s*\(?((?:19|20)\d{2}[a-z]?)\)?"
+    )
+    et_al_pattern = re.compile(r"\b([A-Z][A-Za-z'`-]+)\s+et\s+al\.?\s*\(?((?:19|20)\d{2}[a-z]?)\)?", re.IGNORECASE)
+
+    for match in pair_pattern.finditer(text):
+        first = match.group(1)
+        second = match.group(2)
+        year = match.group(3)
+        label = f"{first} & {second}, {year}"
+        key = label.lower()
+        if key not in seen:
+            seen.add(key)
+            labels.append(label)
+
+    for match in et_al_pattern.finditer(text):
+        surname = match.group(1)
+        year = match.group(2)
+        label = f"{surname} et al., {year}"
+        key = label.lower()
+        if key not in seen:
+            seen.add(key)
+            labels.append(label)
+
+    return labels
 
 
 def _apply_visual_repairs(visuals: GeneratedVisuals, audit_report: AuditReport) -> GeneratedVisuals:
@@ -5186,7 +5323,7 @@ def _parse_bool(value: str) -> bool:
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run sequential A0->A11 workflow on a local PDF")
     parser.add_argument("--pdf", required=True, help="Path to a local PDF file")
-    parser.add_argument("--repair-on-audit", default="false", help="Whether to run one repair cycle: true|false")
+    parser.add_argument("--repair-on-audit", default="true", help="Whether to run one repair cycle: true|false")
     return parser.parse_args()
 
 

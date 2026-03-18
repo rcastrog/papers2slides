@@ -15,7 +15,7 @@ class JobSubmissionRequest(BaseModel):
     audience: str = "research_specialists"
     language: str = "en"
     output_formats: list[str] = Field(default_factory=lambda: ["reveal", "pptx"])
-    repair_on_audit: bool = False
+    repair_on_audit: bool = True
     advanced_options: dict[str, Any] | None = None
 
 

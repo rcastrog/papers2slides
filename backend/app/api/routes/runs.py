@@ -456,7 +456,7 @@ def _build_retry_configuration(run_path: Path, manifest: dict[str, Any]) -> tupl
     if isinstance(job_spec.get("advanced_options"), dict):
         advanced_options = {**advanced_options, **job_spec.get("advanced_options")}
 
-    repair_on_audit = bool(job_spec.get("repair_on_audit", job_summary.get("repair_on_audit", False)))
+    repair_on_audit = bool(job_spec.get("repair_on_audit", job_summary.get("repair_on_audit", True)))
 
     workflow_options: dict[str, Any] = {
         "presentation_style": str(presentation_style),

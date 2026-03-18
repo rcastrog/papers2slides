@@ -16,6 +16,7 @@ from app.models.audit_report import AuditReport
 from app.models.reference_index import ReferenceIndex
 from app.models.presentation_plan import PresentationPlan
 from app.orchestrator.workflow import (
+    _apply_citation_repairs,
     _enforce_external_reference_citation_audit_guard,
     _enforce_retrieved_reference_citation_policy,
 )
@@ -252,6 +253,52 @@ class WorkflowAuditGuardTests(unittest.TestCase):
         self.assertEqual(ref_citations[0].short_citation, "Reference R001 unresolved")
         support_ids = [item.support_id for item in filtered.slides[0].source_support if item.support_type == "reference_summary"]
         self.assertEqual(support_ids, ["R001"])
+
+    def test_citation_repair_adds_reference_citation_for_flagged_slide(self) -> None:
+        plan = _build_plan(include_reference_citation=False)
+        audit = AuditReport.model_validate(
+            {
+                "audit_status": "failed",
+                "deck_risk_level": "high",
+                "slide_audits": [
+                    {
+                        "slide_number": 1,
+                        "slide_title": "Method",
+                        "overall_support": "unsupported",
+                        "findings": [
+                            {
+                                "severity": "high",
+                                "category": "citation_issue",
+                                "description": "Missing reference citation",
+                                "evidence_basis": [
+                                    {
+                                        "source_type": "presentation_plan",
+                                        "source_id": "slide_1",
+                                        "note": "External-work mention detected.",
+                                    }
+                                ],
+                                "recommended_fix": "Add reference citation",
+                            }
+                        ],
+                        "required_action": "add_citation",
+                    }
+                ],
+                "deck_level_findings": [],
+                "repair_priority": [],
+                "global_warnings": [],
+            }
+        )
+
+        repaired = _apply_citation_repairs(plan, audit)
+
+        reference_citations = [
+            citation
+            for citation in repaired.slides[0].citations
+            if citation.source_kind == "reference_paper"
+        ]
+
+        self.assertTrue(reference_citations)
+        self.assertTrue(any("Citation coverage tightened in repair cycle." in warning for warning in repaired.global_warnings))
 
 
 if __name__ == "__main__":

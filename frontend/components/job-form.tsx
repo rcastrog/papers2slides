@@ -13,7 +13,7 @@ export function JobForm() {
   const [presentationStyle, setPresentationStyle] = useState("journal_club");
   const [audience, setAudience] = useState("research_specialists");
   const [language, setLanguage] = useState("en");
-  const [repairOnAudit, setRepairOnAudit] = useState(false);
+  const [repairOnAudit, setRepairOnAudit] = useState(true);
   const [targetSlideCount, setTargetSlideCount] = useState(12);
   const [targetDurationMinutes, setTargetDurationMinutes] = useState(20);
   const [maxReferenceCitationsPerSlide, setMaxReferenceCitationsPerSlide] = useState(4);

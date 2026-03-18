@@ -54,7 +54,7 @@ async def submit_job(request: Request, background_tasks: BackgroundTasks) -> Job
         _execute_workflow,
         input_pdf_path,
         run_path,
-        bool(parsed.get("repair_on_audit", False)),
+        bool(parsed.get("repair_on_audit", True)),
         {
             "presentation_style": parsed.get("presentation_style"),
             "audience": parsed.get("audience"),
@@ -85,7 +85,7 @@ async def _parse_job_submission(request: Request) -> dict[str, Any]:
             "audience": form.get("audience") or "research_specialists",
             "language": form.get("language") or "en",
             "output_formats": output_formats,
-            "repair_on_audit": _parse_bool(form.get("repair_on_audit")),
+            "repair_on_audit": _parse_bool(form.get("repair_on_audit")) if form.get("repair_on_audit") is not None else True,
             "advanced_options": _parse_json_object(form.get("advanced_options")),
         }
 

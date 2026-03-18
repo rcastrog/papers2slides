@@ -18,6 +18,8 @@ export function RunStatus({ runId }: RunStatusProps) {
   const [isRecovering, setIsRecovering] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [hasRevealOutput, setHasRevealOutput] = useState(false);
+  const [hasPptxOutput, setHasPptxOutput] = useState(false);
+  const [repetitionMetrics, setRepetitionMetrics] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,9 +76,11 @@ export function RunStatus({ runId }: RunStatusProps) {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadRevealAvailability() {
+    async function loadOutputAvailability() {
       if (!isCompleted) {
         setHasRevealOutput(false);
+        setHasPptxOutput(false);
+        setRepetitionMetrics(null);
         return;
       }
 
@@ -84,15 +88,19 @@ export function RunStatus({ runId }: RunStatusProps) {
         const results = await getRunResults(runId);
         if (!cancelled) {
           setHasRevealOutput(Boolean(results.reveal_path));
+          setHasPptxOutput(Boolean(results.pptx_path));
+          setRepetitionMetrics((results.repetition_metrics as Record<string, unknown> | undefined) ?? null);
         }
       } catch {
         if (!cancelled) {
           setHasRevealOutput(false);
+          setHasPptxOutput(false);
+          setRepetitionMetrics(null);
         }
       }
     }
 
-    loadRevealAvailability();
+    loadOutputAvailability();
 
     return () => {
       cancelled = true;
@@ -102,6 +110,11 @@ export function RunStatus({ runId }: RunStatusProps) {
   function handleOpenReveal() {
     const revealUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/reveal/index.html`;
     window.open(revealUrl, "_blank", "noopener,noreferrer");
+  }
+
+  function handleOpenDeck() {
+    const deckUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/download/pptx`;
+    window.open(deckUrl, "_blank", "noopener,noreferrer");
   }
 
   async function handleCancel() {
@@ -155,6 +168,8 @@ export function RunStatus({ runId }: RunStatusProps) {
   }
 
   const summary = status?.job_summary;
+  const warningSummary = useMemo(() => buildWarningsSummary(status), [status]);
+  const repetitionSummary = useMemo(() => buildRepetitionSummary(repetitionMetrics), [repetitionMetrics]);
 
   return (
     <div className="card stack">
@@ -211,48 +226,14 @@ export function RunStatus({ runId }: RunStatusProps) {
 
       {!isTerminal ? <div className="muted">Polling every 3s until completion...</div> : null}
 
-      <div className="top-links">
-        {canCancel ? (
-          <button className="btn-secondary" type="button" disabled={isCancelling} onClick={handleCancel}>
-            {isCancelling ? "Requesting cancel..." : "Stop run"}
-          </button>
-        ) : null}
-        <button className="btn-secondary" type="button" disabled={!isCompleted || !hasRevealOutput} onClick={handleOpenReveal}>
-          Open Reveal
-        </button>
-        {canRecoverA11 ? (
-          <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
-            {isRecovering ? "Recovering..." : "Recover from A11"}
-          </button>
-        ) : null}
-        {canRetry ? (
-          <button className="btn-secondary" type="button" disabled={isRetrying} onClick={handleRetryRun}>
-            {isRetrying ? "Starting retry..." : "Retry run"}
-          </button>
-        ) : null}
-      </div>
-
-      <div className="panel stack">
-        <h3 className="section-title">Action hints</h3>
-        {canCancel ? <div className="muted">Stop run: Requests a safe stop at the next stage boundary.</div> : null}
-        {isCompleted ? (
-          <div className="muted">
-            Open Reveal: Opens the HTML slide deck generated for this run.
-            {!hasRevealOutput ? " (Unavailable because no Reveal output was generated.)" : ""}
-          </div>
-        ) : (
-          <div className="muted">Open Reveal: Available after the run completes and Reveal output exists.</div>
-        )}
-        {canRecoverA11 ? (
-          <div className="muted">Recover from A11: Re-runs only the final audit/repair stage for this failed run.</div>
-        ) : null}
-        {canRetry ? (
-          <div className="muted">Retry run: Starts a new run using the same source file and prior parameters.</div>
-        ) : null}
-      </div>
-
       <div className="panel stack">
         <h3 className="section-title">Warnings</h3>
+        <div className="muted" style={{ overflowWrap: "anywhere" }}>
+          AI summary: {warningSummary}
+        </div>
+        <div className="muted" style={{ overflowWrap: "anywhere" }}>
+          Repetitiveness summary: {repetitionSummary}
+        </div>
         {status?.stage_warnings && status.stage_warnings.length > 0 ? (
           <ul style={{ margin: 0, paddingLeft: 20 }}>
             {status.stage_warnings.map((group, groupIndex) => (
@@ -284,8 +265,60 @@ export function RunStatus({ runId }: RunStatusProps) {
       {actionMessage ? <div className="success">{actionMessage}</div> : null}
 
       {isCompleted && !hasRevealOutput ? <div className="muted">Reveal output was not generated for this run.</div> : null}
+      {isCompleted && !hasPptxOutput ? <div className="muted">PPTX output was not generated for this run.</div> : null}
 
       {error ? <div className="error">{error}</div> : null}
+
+      <div className="top-links">
+        {canCancel ? (
+          <button className="btn-secondary" type="button" disabled={isCancelling} onClick={handleCancel}>
+            {isCancelling ? "Requesting cancel..." : "Stop run"}
+          </button>
+        ) : null}
+        <button className="btn-secondary" type="button" disabled={!isCompleted || !hasRevealOutput} onClick={handleOpenReveal}>
+          Open Reveal
+        </button>
+        <button className="btn-secondary" type="button" disabled={!isCompleted || !hasPptxOutput} onClick={handleOpenDeck}>
+          Open Deck
+        </button>
+        {canRecoverA11 ? (
+          <button className="btn-secondary" type="button" disabled={isRecovering} onClick={handleRecoverA11}>
+            {isRecovering ? "Recovering..." : "Recover from A11"}
+          </button>
+        ) : null}
+        {canRetry ? (
+          <button className="btn-secondary" type="button" disabled={isRetrying} onClick={handleRetryRun}>
+            {isRetrying ? "Starting retry..." : "Retry run"}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="panel stack">
+        <h3 className="section-title">Action hints</h3>
+        {canCancel ? <div className="muted">Stop run: Requests a safe stop at the next stage boundary.</div> : null}
+        {isCompleted ? (
+          <div className="muted">
+            Open Reveal: Opens the HTML slide deck generated for this run.
+            {!hasRevealOutput ? " (Unavailable because no Reveal output was generated.)" : ""}
+          </div>
+        ) : (
+          <div className="muted">Open Reveal: Available after the run completes and Reveal output exists.</div>
+        )}
+        {isCompleted ? (
+          <div className="muted">
+            Open Deck: Opens the repaired PPTX deck file for editing.
+            {!hasPptxOutput ? " (Unavailable because no PPTX output was generated.)" : ""}
+          </div>
+        ) : (
+          <div className="muted">Open Deck: Available after the run completes and PPTX output exists.</div>
+        )}
+        {canRecoverA11 ? (
+          <div className="muted">Recover from A11: Re-runs only the final audit/repair stage for this failed run.</div>
+        ) : null}
+        {canRetry ? (
+          <div className="muted">Retry run: Starts a new run using the same source file and prior parameters.</div>
+        ) : null}
+      </div>
 
       {isCompleted ? (
         <div className="top-links">
@@ -295,4 +328,76 @@ export function RunStatus({ runId }: RunStatusProps) {
       ) : null}
     </div>
   );
+}
+
+function buildWarningsSummary(status: RunStatusResponse | null): string {
+  if (!status) {
+    return "Waiting for run status data.";
+  }
+
+  const grouped = status.stage_warnings ?? [];
+  const warnings = grouped.flatMap((group) => group.warnings);
+  const normalizedWarnings = warnings.length > 0 ? warnings : status.warnings;
+  if (!normalizedWarnings.length) {
+    return "No warnings were recorded in this run.";
+  }
+
+  const hasCitationGuard = normalizedWarnings.some((warning) =>
+    warning.toLowerCase().includes("external-reference citation guard")
+  );
+  const hasRetrievalNoise = normalizedWarnings.some((warning) =>
+    warning.toLowerCase().includes("reference") &&
+    (warning.toLowerCase().includes("retrieval") || warning.toLowerCase().includes("not_found") || warning.toLowerCase().includes("synthesized"))
+  );
+  const hasVisualFallback = normalizedWarnings.some((warning) => warning.toLowerCase().includes("image generation disabled"));
+
+  const focus: string[] = [];
+  if (hasCitationGuard) {
+    focus.push("citation compliance is the top blocker and should be fixed first");
+  }
+  if (hasRetrievalNoise) {
+    focus.push("reference retrieval was partially recovered but still incomplete");
+  }
+  if (hasVisualFallback) {
+    focus.push("visuals are deterministic fallbacks rather than generated images");
+  }
+
+  const stageCount = grouped.filter((group) => group.stage !== "run_global").length;
+  if (!focus.length) {
+    return `Warnings were recorded across ${stageCount} stage(s); review run-level items first, then stage warnings in order.`;
+  }
+  return `Warnings were recorded across ${stageCount} stage(s). Priority focus: ${focus.join("; ")}.`;
+}
+
+function buildRepetitionSummary(metrics: Record<string, unknown> | null): string {
+  if (!metrics) {
+    return "Repetition metrics are not available yet.";
+  }
+
+  const bullet = asRecord(metrics.bullet);
+  const slide = asRecord(metrics.slide);
+  const citation = asRecord(metrics.citation);
+
+  const bulletDupes = asNumber(bullet.exact_repeated_instances);
+  const bulletPairs = asNumber(bullet.near_duplicate_pair_count);
+  const slideDupes = asNumber(slide.exact_repeated_instances);
+  const citationDupes = asNumber(citation.exact_label_repeated_instances);
+  const citationReasonPairs = asNumber(citation.reason_near_duplicate_pair_count);
+
+  const segments = [
+    `bullets exact repeats: ${bulletDupes}`,
+    `bullets near-duplicate pairs: ${bulletPairs}`,
+    `slides exact repeats: ${slideDupes}`,
+    `citation label repeats: ${citationDupes}`,
+    `citation rationale near-duplicates: ${citationReasonPairs}`,
+  ];
+  return segments.join("; ");
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
