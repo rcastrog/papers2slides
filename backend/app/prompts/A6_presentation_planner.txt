@@ -55,6 +55,14 @@ SLIDE SUBSTANCE REQUIREMENTS
 4. If the source material is thin for a slide, merge or reframe the slide rather than outputting a minimal-content slide.
 5. Title slide may remain concise.
 
+BULLET DIVERSITY REQUIREMENTS
+1. Treat bullet writing as a two-step internal process: generate candidate bullets first, then select final bullets.
+2. Internally generate substantially more candidate bullets than required across the full deck (target at least 1.5x to 2.0x the needed total).
+3. During selection, enforce deck-level diversity: avoid repeating the same claim wording across slides unless repetition is strictly required for narrative continuity.
+4. Prefer claim-complementary bullets over claim-duplicative bullets when two options are similarly grounded.
+5. If a core claim must appear more than once, restate it from a different analytical angle (method, evidence, limitation, implication) and avoid near-identical phrasing.
+6. Keep all selected bullets source-grounded and citation-compatible.
+
 DEFAULT NARRATIVE EXPECTATION
 Unless the paper structure strongly suggests otherwise, the presentation should roughly cover:
 - title / context

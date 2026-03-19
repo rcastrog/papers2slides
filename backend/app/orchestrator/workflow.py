@@ -108,6 +108,8 @@ _QUALITY_GATE_MIN_SLIDE_ABSOLUTE = 3
 _QUALITY_GATE_MAX_BULLET_NEAR_DUPLICATES = 6
 _QUALITY_GATE_MIN_BULLET_UNIQUE_RATIO = 0.72
 _QUALITY_GATE_MAX_SLIDE_NEAR_DUPLICATES = 3
+_BULLET_UNIQUENESS_NEAR_THRESHOLD = 0.9
+_BULLET_UNIQUENESS_MIN_CHARS = 28
 
 
 class WorkflowCancelledError(RuntimeError):
@@ -2358,6 +2360,17 @@ def _enforce_slide_density_and_target_count(
     if repetition_changed:
         changed = True
 
+    uniqueness_changed = _enforce_global_bullet_uniqueness(
+        slides=slides,
+        sections_by_id=sections_by_id,
+        section_payloads=section_payloads,
+        language=language,
+        near_threshold=_BULLET_UNIQUENESS_NEAR_THRESHOLD,
+        min_chars_for_similarity=_BULLET_UNIQUENESS_MIN_CHARS,
+    )
+    if uniqueness_changed:
+        changed = True
+
     for idx, slide in enumerate(slides, start=1):
         if isinstance(slide, dict):
             slide["slide_number"] = idx
@@ -2382,6 +2395,10 @@ def _enforce_slide_density_and_target_count(
         if repetition_changed:
             warnings.append(
                 "Auto-policy: reduced repeated long-form bullets across slides to improve content diversity."
+            )
+        if uniqueness_changed:
+            warnings.append(
+                "Auto-policy: applied second-pass global bullet uniqueness selection to reduce cross-slide overlap."
             )
         payload["global_warnings"] = warnings
 
@@ -3001,6 +3018,120 @@ def _reduce_cross_slide_bullet_repetition(
         normalized_points = _dedupe_preserve_order(kept_points)
         if normalized_points != original_points:
             slide["key_points"] = normalized_points
+            changed = True
+
+    return changed
+
+
+def _enforce_global_bullet_uniqueness(
+    *,
+    slides: list[dict[str, Any]],
+    sections_by_id: dict[str, dict[str, Any]],
+    section_payloads: list[dict[str, Any]],
+    language: str,
+    near_threshold: float,
+    min_chars_for_similarity: int,
+) -> bool:
+    if not slides:
+        return False
+
+    changed = False
+    selected_global: list[str] = []
+    selected_normalized: set[str] = set()
+
+    def _is_too_similar(candidate: str) -> bool:
+        candidate_clean = re.sub(r"\s+", " ", str(candidate or "").strip())
+        candidate_key = _normalize_bullet_key(candidate_clean)
+        if not candidate_key:
+            return True
+        if candidate_key in selected_normalized:
+            return True
+
+        if len(candidate_clean) < min_chars_for_similarity:
+            return False
+
+        for existing in selected_global:
+            if len(existing) < min_chars_for_similarity:
+                continue
+            if _semantic_similarity_score(candidate_clean, existing) >= near_threshold:
+                return True
+        return False
+
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+
+        role = str(slide.get("slide_role", "")).strip().lower()
+        min_points = 3 if role == "title" else 4
+        max_points = 4 if role == "title" else 6
+
+        original_points = [
+            re.sub(r"\s+", " ", str(item or "").strip())
+            for item in (slide.get("key_points", []) or [])
+        ]
+        original_points = [item for item in original_points if item]
+        if language == "es":
+            original_points = [
+                _localize_spanish_text_fragment(item, slide=slide)
+                for item in original_points
+            ]
+
+        kept: list[str] = []
+        for point in original_points:
+            if _is_too_similar(point):
+                changed = True
+                continue
+            kept.append(point)
+            selected_global.append(point)
+            selected_normalized.add(_normalize_bullet_key(point))
+
+        candidate_pool = _build_density_candidates_for_slide(
+            slide=slide,
+            sections_by_id=sections_by_id,
+            section_payloads=section_payloads,
+            language=language,
+        )
+        if language == "es":
+            candidate_pool.extend(_support_slide_fallback_lines(language=language))
+        else:
+            candidate_pool.extend(_support_slide_fallback_lines(language="en"))
+
+        for candidate in candidate_pool:
+            if len(kept) >= min_points:
+                break
+            candidate_clean = re.sub(r"\s+", " ", str(candidate or "").strip())
+            if not candidate_clean:
+                continue
+            if language == "es":
+                candidate_clean = _localize_spanish_text_fragment(candidate_clean, slide=slide)
+            if _is_too_similar(candidate_clean):
+                continue
+            kept.append(candidate_clean)
+            selected_global.append(candidate_clean)
+            selected_normalized.add(_normalize_bullet_key(candidate_clean))
+            changed = True
+
+        if len(kept) < min_points:
+            # Last-resort filler: keep original non-duplicate exact bullets even if semantically close.
+            for point in original_points:
+                if len(kept) >= min_points:
+                    break
+                if language == "es":
+                    point = _localize_spanish_text_fragment(point, slide=slide)
+                key = _normalize_bullet_key(point)
+                if not key or key in {_normalize_bullet_key(item) for item in kept}:
+                    continue
+                kept.append(point)
+                selected_global.append(point)
+                selected_normalized.add(key)
+                changed = True
+
+        deduped = _dedupe_preserve_order(kept)
+        if len(deduped) > max_points:
+            deduped = deduped[:max_points]
+
+        if deduped != original_points:
+            slide["key_points"] = deduped
             changed = True
 
     return changed
