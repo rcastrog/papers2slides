@@ -12,6 +12,7 @@ from app.models.generated_visuals import GeneratedVisuals
 from app.models.pptx_result import PPTXBuildResult
 from app.models.presentation_plan import PresentationPlan
 from app.models.speaker_notes import SpeakerNotes
+from app.utils.repetition_highlight import build_presentation_bullet_highlight_labels, normalize_bullet_key
 
 
 class PPTXRenderer:
@@ -41,6 +42,9 @@ class PPTXRenderer:
 
         notes_by_slide = {item.slide_number: item for item in speaker_notes.slide_notes}
         visuals_by_slide = {}
+        bullet_highlight_labels = build_presentation_bullet_highlight_labels(
+            slides=[slide.model_dump() for slide in presentation_plan.slides],
+        )
         for item in generated_visuals.generated_visuals:
             visuals_by_slide.setdefault(item.slide_number, []).append(item)
 
@@ -67,6 +71,11 @@ class PPTXRenderer:
             for index, point in enumerate(slide.key_points):
                 paragraph = text_frame.paragraphs[0] if index == 0 else text_frame.add_paragraph()
                 paragraph.text = point
+                self._apply_bullet_highlight(
+                    paragraph=paragraph,
+                    point=point,
+                    bullet_highlight_labels=bullet_highlight_labels,
+                )
             self._apply_bullet_text_downshift(text_frame=text_frame, points=slide.key_points)
 
             citations = [citation.short_citation for citation in slide.citations]
@@ -471,3 +480,51 @@ class PPTXRenderer:
             box.text_frame.text = f"{slide_number} / {total_slides}"
         except Exception:
             return
+
+    @staticmethod
+    def _apply_bullet_highlight(*, paragraph: object, point: str, bullet_highlight_labels: dict[str, str]) -> None:
+        key = normalize_bullet_key(point)
+        label = bullet_highlight_labels.get(key)
+        if label not in {"repeated", "near_repeated"}:
+            return
+
+        hex_color = "FFF176" if label == "repeated" else "FDBA74"
+
+        runs = list(getattr(paragraph, "runs", []) or [])
+        if not runs and hasattr(paragraph, "add_run"):
+            try:
+                run = paragraph.add_run()
+                if hasattr(run, "text") and not str(getattr(run, "text", "")).strip():
+                    run.text = str(point)
+                runs = [run]
+            except Exception:
+                runs = []
+
+        for run in runs:
+            try:
+                PPTXRenderer._apply_run_highlight_xml(run=run, hex_color=hex_color)
+            except Exception:
+                continue
+
+    @staticmethod
+    def _apply_run_highlight_xml(*, run: object, hex_color: str) -> None:
+        # python-pptx has no stable high-level API for text highlight; use run XML.
+        oxml_xmlchemy = importlib.import_module("pptx.oxml.xmlchemy")
+        oxml_ns = importlib.import_module("pptx.oxml.ns")
+        OxmlElement = getattr(oxml_xmlchemy, "OxmlElement")
+        qn = getattr(oxml_ns, "qn")
+
+        r = getattr(run, "_r", None)
+        if r is None:
+            return
+
+        r_pr = r.get_or_add_rPr()
+        for child in list(r_pr):
+            if child.tag == qn("a:highlight"):
+                r_pr.remove(child)
+
+        highlight = OxmlElement("a:highlight")
+        color = OxmlElement("a:srgbClr")
+        color.set("val", hex_color)
+        highlight.append(color)
+        r_pr.append(highlight)

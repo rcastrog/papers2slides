@@ -266,6 +266,65 @@ def _build_minimal_visuals() -> GeneratedVisuals:
     )
 
 
+def _build_repetition_highlight_plan() -> PresentationPlan:
+    return PresentationPlan.model_validate(
+        {
+            "deck_metadata": {
+                "title": "Repetition Deck",
+                "subtitle": "Sub",
+                "language": "en",
+                "presentation_style": "journal_club",
+                "target_audience": "research_specialists",
+                "target_duration_minutes": 20,
+                "target_slide_count": 2,
+            },
+            "narrative_arc": {
+                "overall_story": "Story",
+                "audience_adaptation_notes": [],
+                "language_adaptation_notes": [],
+            },
+            "slides": [
+                {
+                    "slide_number": 1,
+                    "slide_role": "discussion",
+                    "title": "Slide 1",
+                    "objective": "Obj",
+                    "key_points": [
+                        "This exact sentence is repeated on the next slide for highlighting.",
+                        "The framework introduces adaptive trust and accountability mechanisms for multi-agent delegation in real deployments.",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+                {
+                    "slide_number": 2,
+                    "slide_role": "discussion",
+                    "title": "Slide 2",
+                    "objective": "Obj",
+                    "key_points": [
+                        "This exact sentence is repeated on the next slide for highlighting.",
+                        "The framework introduces adaptive trust and accountability controls for multi-agent delegation in practical deployments.",
+                    ],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                },
+            ],
+            "global_warnings": [],
+            "plan_confidence": "medium",
+        }
+    )
+
+
 def _build_visuals_with_generated_asset() -> GeneratedVisuals:
     return GeneratedVisuals.model_validate(
         {
@@ -575,6 +634,25 @@ class RevealAgentSmokeTest(unittest.TestCase):
         self.assertNotEqual(label_a, label_b)
         self.assertTrue(label_a)
         self.assertTrue(label_b)
+
+    def test_renderer_highlights_repeated_and_near_repeated_bullets(self) -> None:
+        llm_client = LLMClient(transport=FakeTransport())
+        prompt_loader = PromptLoader(prompts_dir=PROJECT_ROOT / "backend" / "app" / "prompts")
+        agent = RevealBuilderAgent(llm_client=llm_client, prompt_loader=prompt_loader)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "reveal"
+            agent.render(
+                presentation_plan=_build_repetition_highlight_plan(),
+                speaker_notes=_build_minimal_notes(),
+                generated_visuals=_build_minimal_visuals(),
+                output_dir=output_dir,
+                asset_map={},
+            )
+
+            html_content = (output_dir / "index.html").read_text(encoding="utf-8")
+            self.assertIn("bullet-repeated", html_content)
+            self.assertIn("bullet-near-repeated", html_content)
 
 
 if __name__ == "__main__":

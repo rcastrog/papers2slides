@@ -1082,6 +1082,8 @@ def run_workflow(
         plan=presentation_plan,
         section_analyses=section_results,
         target_slide_count=normalized_options["target_slide_count"],
+        artifact_manifest=artifact_result,
+        asset_map=resolved_asset_map,
     )
     run_manager.save_json("presentation/presentation_plan.json", presentation_plan.model_dump())
 
@@ -1304,6 +1306,8 @@ def run_workflow(
                 plan=local_presentation_plan,
                 section_analyses=section_results,
                 target_slide_count=normalized_options["target_slide_count"],
+                artifact_manifest=artifact_result,
+                asset_map=resolved_asset_map,
             )
 
             run_manager.save_json("presentation/presentation_plan_repaired.json", local_presentation_plan.model_dump())
@@ -2211,6 +2215,8 @@ def _enforce_slide_density_and_target_count(
     plan: PresentationPlan,
     section_analyses: list[Any],
     target_slide_count: int,
+    artifact_manifest: ArtifactManifest | None = None,
+    asset_map: dict[str, str] | None = None,
 ) -> PresentationPlan:
     """Increase slide substance and close slide-count gaps with grounded support slides."""
     payload = plan.model_dump()
@@ -2231,6 +2237,34 @@ def _enforce_slide_density_and_target_count(
         section_id = str(section.get("section_id", "")).strip()
         if section_id:
             sections_by_id[section_id] = section
+
+    section_artifact_candidates: dict[str, list[str]] = {}
+    effective_asset_map = asset_map or {}
+    if artifact_manifest is not None:
+        for artifact in artifact_manifest.artifacts:
+            artifact_id = str(getattr(artifact, "artifact_id", "")).strip()
+            if not artifact_id or not effective_asset_map.get(artifact_id):
+                continue
+            section_key = _normalize_section_identifier(getattr(artifact, "section_id", ""))
+            if not section_key:
+                continue
+            section_artifact_candidates.setdefault(section_key, []).append(artifact_id)
+
+    for section_key, artifact_ids in section_artifact_candidates.items():
+        section_artifact_candidates[section_key] = _dedupe_preserve_order(artifact_ids)
+
+    used_source_artifact_ids: set[str] = set()
+    for slide in slides:
+        if not isinstance(slide, dict):
+            continue
+        for visual in slide.get("visuals", []) or []:
+            if not isinstance(visual, dict):
+                continue
+            if str(visual.get("source_origin", "")).strip().lower() != "source_paper":
+                continue
+            asset_id = str(visual.get("asset_id", "")).strip()
+            if asset_id and asset_id.lower() != "none":
+                used_source_artifact_ids.add(asset_id)
 
     language = str(payload.get("deck_metadata", {}).get("language", "en")).strip().lower() if isinstance(payload.get("deck_metadata", {}), dict) else "en"
     changed = False
@@ -2289,6 +2323,8 @@ def _enforce_slide_density_and_target_count(
             section_payloads=section_payloads,
             target_slide_count=target,
             language=language,
+            section_artifact_candidates=section_artifact_candidates,
+            used_source_artifact_ids=used_source_artifact_ids,
         )
         if addenda:
             insert_at = len(slides)
@@ -2443,6 +2479,8 @@ def _build_supporting_slides_for_target(
     section_payloads: list[dict[str, Any]],
     target_slide_count: int,
     language: str,
+    section_artifact_candidates: dict[str, list[str]] | None = None,
+    used_source_artifact_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     additional: list[dict[str, Any]] = []
     if len(existing_slides) >= target_slide_count:
@@ -2494,6 +2532,9 @@ def _build_supporting_slides_for_target(
         for point in (slide.get("key_points", []) or [])
         if _normalize_bullet_key(str(point))
     }
+
+    artifact_candidates_by_section = section_artifact_candidates or {}
+    used_artifacts = used_source_artifact_ids if used_source_artifact_ids is not None else set()
 
     needed_support = max(0, target_slide_count - len(existing_slides))
     max_support_slides = needed_support
@@ -2574,6 +2615,20 @@ def _build_supporting_slides_for_target(
             continue
 
         section_id = str(section.get("section_id", "")).strip() or f"s{start_number + len(additional)}"
+        section_lookup_key = _normalize_section_identifier(section_id)
+        selected_source_artifact_id = ""
+        if section_lookup_key and section_lookup_key in artifact_candidates_by_section:
+            selected_source_artifact_id = next(
+                (
+                    artifact_id
+                    for artifact_id in artifact_candidates_by_section.get(section_lookup_key, [])
+                    if artifact_id not in used_artifacts
+                ),
+                "",
+            )
+
+        if selected_source_artifact_id:
+            used_artifacts.add(selected_source_artifact_id)
         default_section_title = "Analisis de soporte" if language == "es" else "Supporting analysis"
         section_title = str(section.get("section_title", default_section_title)).strip()
         if language == "es" and _looks_predominantly_english(section_title):
@@ -2637,6 +2692,48 @@ def _build_supporting_slides_for_target(
             else "Auto-policy: supplemental support slide added to satisfy requested slide count."
         )
 
+        source_support = [
+            {
+                "support_type": "source_section",
+                "support_id": section_id,
+                "support_note": support_note,
+            }
+        ]
+        if selected_source_artifact_id:
+            source_support.append(
+                {
+                    "support_type": "source_artifact",
+                    "support_id": selected_source_artifact_id,
+                    "support_note": "Auto-policy: selected unused source artifact for support-slide visual coverage.",
+                }
+            )
+
+        visuals = [
+            {
+                "visual_type": "text_only",
+                "asset_id": "none",
+                "source_origin": "none",
+                "usage_mode": "none",
+                "placement_hint": "left_visual_right_text",
+                "why_this_visual": (
+                    "Diapositiva centrada en texto para conservar detalle denso sustentado en la fuente."
+                    if language == "es"
+                    else "Text-first support slide to retain dense, source-grounded detail."
+                ),
+            }
+        ]
+        if selected_source_artifact_id:
+            visuals = [
+                {
+                    "visual_type": "source_figure",
+                    "asset_id": selected_source_artifact_id,
+                    "source_origin": "source_paper",
+                    "usage_mode": "reuse",
+                    "placement_hint": "left_visual_right_text",
+                    "why_this_visual": "Auto-policy: use an unused mapped source artifact to increase visual evidence coverage.",
+                }
+            ]
+
         additional.append(
             {
                 "slide_number": slide_number,
@@ -2645,27 +2742,8 @@ def _build_supporting_slides_for_target(
                 "objective": objective,
                 "key_points": key_points,
                 "must_avoid": must_avoid,
-                "visuals": [
-                    {
-                        "visual_type": "text_only",
-                        "asset_id": "none",
-                        "source_origin": "none",
-                        "usage_mode": "none",
-                        "placement_hint": "left_visual_right_text",
-                        "why_this_visual": (
-                            "Diapositiva centrada en texto para conservar detalle denso sustentado en la fuente."
-                            if language == "es"
-                            else "Text-first support slide to retain dense, source-grounded detail."
-                        ),
-                    }
-                ],
-                "source_support": [
-                    {
-                        "support_type": "source_section",
-                        "support_id": section_id,
-                        "support_note": support_note,
-                    }
-                ],
+                "visuals": visuals,
+                "source_support": source_support,
                 "citations": [
                     {
                         "short_citation": short_citation,
@@ -2756,6 +2834,16 @@ def _apply_structural_slide_order_policy(
 def _normalize_title_for_match(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(value or "").strip().lower())
     return "".join(char for char in normalized if not unicodedata.combining(char))
+
+
+def _normalize_section_identifier(value: str) -> str:
+    text = str(value or "").strip().upper()
+    if not text:
+        return ""
+    match = re.match(r"^S0*(\d+)$", text)
+    if match:
+        return f"S{int(match.group(1))}"
+    return text
 
 
 def _looks_predominantly_english(text: str) -> bool:
@@ -2859,7 +2947,7 @@ def _reduce_cross_slide_bullet_repetition(
     overused = {
         key
         for key, count in counts.items()
-        if count > 2 and len(samples.get(key, "")) >= 85
+        if count > 1 and len(samples.get(key, "")) >= 70
     }
     if not overused:
         return False
@@ -2882,7 +2970,7 @@ def _reduce_cross_slide_bullet_repetition(
             if not key or key in local_seen:
                 continue
 
-            if key in overused and seen.get(key, 0) >= 2:
+            if key in overused and seen.get(key, 0) >= 1:
                 changed = True
                 continue
 
@@ -2903,7 +2991,7 @@ def _reduce_cross_slide_bullet_repetition(
                 candidate_key = _normalize_bullet_key(candidate)
                 if not candidate_key or candidate_key in local_seen:
                     continue
-                if candidate_key in overused and seen.get(candidate_key, 0) >= 2:
+                if candidate_key in overused and seen.get(candidate_key, 0) >= 1:
                     continue
                 kept_points.append(candidate)
                 local_seen.add(candidate_key)

@@ -13,7 +13,10 @@ from app.models.generated_visuals import GeneratedVisuals
 from app.models.presentation_plan import PresentationPlan
 from app.models.reveal_result import RevealRenderResult
 from app.models.speaker_notes import SpeakerNotes
+from app.utils.repetition_highlight import build_presentation_bullet_highlight_labels, normalize_bullet_key
 from app.utils.conceptual_visual_factory import render_conceptual_svg
+
+_DECK_ICON_SVG = """<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 128 128\" role=\"img\" aria-label=\"paper2slides icon\">\n  <defs>\n    <linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">\n      <stop offset=\"0%\" stop-color=\"#0f172a\"/>\n      <stop offset=\"100%\" stop-color=\"#1d4ed8\"/>\n    </linearGradient>\n    <linearGradient id=\"paper\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">\n      <stop offset=\"0%\" stop-color=\"#ffffff\"/>\n      <stop offset=\"100%\" stop-color=\"#e2e8f0\"/>\n    </linearGradient>\n  </defs>\n  <rect width=\"128\" height=\"128\" rx=\"24\" fill=\"url(#bg)\"/>\n  <path d=\"M33 24h43l19 19v61H33z\" fill=\"url(#paper)\"/>\n  <path d=\"M76 24v19h19z\" fill=\"#cbd5e1\"/>\n  <rect x=\"42\" y=\"57\" width=\"44\" height=\"7\" rx=\"3.5\" fill=\"#1d4ed8\"/>\n  <rect x=\"42\" y=\"72\" width=\"34\" height=\"7\" rx=\"3.5\" fill=\"#1d4ed8\"/>\n  <path d=\"M46 100l12-12 8 8 16-16\" fill=\"none\" stroke=\"#f59e0b\" stroke-width=\"6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n  <circle cx=\"82\" cy=\"80\" r=\"5\" fill=\"#f59e0b\"/>\n</svg>\n"""
 
 
 class RevealRenderer:
@@ -32,10 +35,14 @@ class RevealRenderer:
         output_dir.mkdir(parents=True, exist_ok=True)
         assets_dir = output_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
+        self._write_deck_icon(output_dir=output_dir)
 
         notes_by_slide = {item.slide_number: item for item in speaker_notes.slide_notes}
         generated_visuals_by_slide = {}
         generated_visuals_by_id = {}
+        bullet_highlight_labels = build_presentation_bullet_highlight_labels(
+            slides=[slide.model_dump() for slide in presentation_plan.slides],
+        )
         deck_language = str(presentation_plan.deck_metadata.language or "en").strip().lower()
         why_cited_label = "Por que se cita" if deck_language == "es" else "Why cited"
         for item in generated_visuals.generated_visuals:
@@ -160,7 +167,21 @@ class RevealRenderer:
                 note_items = "".join(f"<li>{html.escape(point)}</li>" for point in note.talking_points)
                 notes_block = f'<aside class="notes"><ul>{note_items}</ul></aside>'
 
-            key_points_html = "".join(f"<li>{html.escape(point)}</li>" for point in slide.key_points)
+            key_points_html_parts: list[str] = []
+            for point in slide.key_points:
+                key = normalize_bullet_key(point)
+                label = bullet_highlight_labels.get(key)
+                if label == "repeated":
+                    css_class = "bullet-repeated"
+                elif label == "near_repeated":
+                    css_class = "bullet-near-repeated"
+                else:
+                    css_class = ""
+
+                class_attr = f' class="{css_class}"' if css_class else ""
+                key_points_html_parts.append(f"<li{class_attr}>{html.escape(point)}</li>")
+
+            key_points_html = "".join(key_points_html_parts)
             citations_html = "".join(
                 (
                     '<span class="citation-chip" '
@@ -231,6 +252,8 @@ class RevealRenderer:
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>{html.escape(presentation_plan.deck_metadata.title)}</title>
+    <link rel=\"icon\" type=\"image/svg+xml\" href=\"icon.svg\" />
+    <link rel=\"shortcut icon\" href=\"icon.svg\" />
   <style>
         :root {{
             --ink: #102a43;
@@ -259,6 +282,9 @@ class RevealRenderer:
         .slide-title {{ margin: 0 0 14px 0; }}
         .slide-body {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }}
         .slide-body ul {{ margin: 0; padding-left: 20px; color: var(--ink-soft); line-height: 1.5; }}
+        .slide-body li {{ border-radius: 6px; padding: 2px 6px; margin: 3px 0; }}
+        .slide-body li.bullet-repeated {{ background: #fff59d; border: 1px solid #facc15; color: #1f2937; }}
+        .slide-body li.bullet-near-repeated {{ background: #fed7aa; border: 1px solid #fb923c; color: #1f2937; }}
         .visuals {{ display: grid; gap: 10px; }}
         .visual-frame {{
             margin: 0;
@@ -353,6 +379,13 @@ class RevealRenderer:
             "deviations": [],
         }
         return RevealRenderResult.model_validate(result_payload)
+
+    @staticmethod
+    def _write_deck_icon(*, output_dir: Path) -> None:
+        icon_path = output_dir / "icon.svg"
+        if icon_path.exists():
+            return
+        icon_path.write_text(_DECK_ICON_SVG, encoding="utf-8")
 
     @staticmethod
     def _discover_asset_path(*, asset_id: str, source_origin: str, output_dir: Path) -> str:

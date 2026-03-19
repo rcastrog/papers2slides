@@ -767,6 +767,182 @@ class WorkflowRuntimeOptionTests(WorkflowReferenceCitationPolicyTests):
         effective = _resolve_effective_llm_settings(base, options)
         self.assertEqual(effective.llm_temperature, 0.0)
 
+    def test_density_policy_reduces_long_repeated_bullets_to_single_occurrence(self) -> None:
+        repeated = (
+            "This long repeated bullet describes limitations of heuristic delegation "
+            "and appears across multiple support slides when backfill is aggressive."
+        )
+        plan = PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": 2,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "slide_role": "discussion",
+                        "title": "Slide One",
+                        "objective": "Obj",
+                        "key_points": [repeated, "A", "B", "C"],
+                        "must_avoid": [],
+                        "visuals": [],
+                        "source_support": [],
+                        "citations": [],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    },
+                    {
+                        "slide_number": 2,
+                        "slide_role": "discussion",
+                        "title": "Slide Two",
+                        "objective": "Obj",
+                        "key_points": [repeated, "D", "E", "F"],
+                        "must_avoid": [],
+                        "visuals": [],
+                        "source_support": [],
+                        "citations": [],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    },
+                ],
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=[],
+            target_slide_count=2,
+        )
+
+        count = sum(1 for slide in updated.slides for point in slide.key_points if point == repeated)
+        self.assertEqual(count, 1)
+
+    def test_density_policy_uses_unused_source_artifact_for_support_slide(self) -> None:
+        plan = PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": 2,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "slide_role": "result",
+                        "title": "Core Slide",
+                        "objective": "Obj",
+                        "key_points": ["A", "B", "C", "D"],
+                        "must_avoid": [],
+                        "visuals": [],
+                        "source_support": [{"support_type": "source_section", "support_id": "s1", "support_note": "note"}],
+                        "citations": [],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    }
+                ],
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+        section_analyses = [
+            {
+                "section_id": "s1",
+                "section_title": "Results",
+                "section_role": ["experiment_result_interpretation"],
+                "summary": "Summary",
+                "key_claims": [
+                    {"claim": "Claim one", "support_level_within_section": "strong", "notes": "Note"},
+                    {"claim": "Claim two", "support_level_within_section": "strong", "notes": "Note"},
+                ],
+                "important_details": ["Detail one", "Detail two"],
+                "concepts_needing_explanation": [],
+                "evidence_or_arguments": [],
+                "limitations_or_cautions": [],
+                "candidate_visualizable_ideas": [],
+                "presentation_relevance": {
+                    "importance_for_final_deck": "high",
+                    "why_it_matters": "Important",
+                    "likely_slide_use": ["main_content"],
+                },
+                "uncertainty_flags": [],
+                "confidence": "high",
+            }
+        ]
+
+        manifest = ArtifactManifest.model_validate(
+            {
+                "artifacts": [
+                    {
+                        "artifact_id": "A_FIG_99",
+                        "artifact_label": "Figure 99",
+                        "artifact_type": "figure",
+                        "page_numbers": [4],
+                        "section_id": "S01",
+                        "caption": "Caption",
+                        "nearby_context_summary": "Summary",
+                        "file_path": "source/SRC_P04_IMG01.jpg",
+                        "extraction_quality": "high",
+                        "readability_for_presentation": "high",
+                        "core_message": "Message",
+                        "presentation_value": "high",
+                        "recommended_action": "reuse_directly",
+                        "recommendation_rationale": "Good",
+                        "must_preserve_if_adapted": [],
+                        "distortion_risk": "low",
+                        "ambiguities": [],
+                        "notes": [],
+                    }
+                ],
+                "summary": {
+                    "artifact_count": 1,
+                    "high_value_artifact_ids": ["A_FIG_99"],
+                    "high_risk_artifact_ids": [],
+                    "equation_artifact_ids": [],
+                    "warnings": [],
+                },
+            }
+        )
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=section_analyses,
+            target_slide_count=2,
+            artifact_manifest=manifest,
+            asset_map={"A_FIG_99": "C:/tmp/fig99.png"},
+        )
+
+        self.assertEqual(len(updated.slides), 2)
+        support_slide = updated.slides[1]
+        self.assertEqual(support_slide.visuals[0].source_origin, "source_paper")
+        self.assertEqual(support_slide.visuals[0].asset_id, "A_FIG_99")
+        self.assertTrue(any(item.support_type == "source_artifact" and item.support_id == "A_FIG_99" for item in support_slide.source_support))
+
     def test_last_resort_generated_visual_policy_drops_source_backed_slides(self) -> None:
         plan = PresentationPlan.model_validate(
             {

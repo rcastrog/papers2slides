@@ -35,3 +35,6 @@ build/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Keep project task list tracked even if globally ignored.
+!TODO.md

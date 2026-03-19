@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="paper2slides icon">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e2e8f0"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  <path d="M33 24h43l19 19v61H33z" fill="url(#paper)"/>
+  <path d="M76 24v19h19z" fill="#cbd5e1"/>
+  <rect x="42" y="57" width="44" height="7" rx="3.5" fill="#1d4ed8"/>
+  <rect x="42" y="72" width="34" height="7" rx="3.5" fill="#1d4ed8"/>
+  <path d="M46 100l12-12 8 8 16-16" fill="none" stroke="#f59e0b" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="82" cy="80" r="5" fill="#f59e0b"/>
+</svg>
