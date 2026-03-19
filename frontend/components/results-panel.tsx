@@ -54,6 +54,15 @@ export function ResultsPanel({ runId }: ResultsPanelProps) {
 
       {results ? (
         <>
+          {results.quality_gate?.passed === false ? (
+            <div className="error" style={{ overflowWrap: "anywhere" }}>
+              Quality gate failed for this run.
+              {results.quality_gate.issues && results.quality_gate.issues.length > 0
+                ? ` Reasons: ${results.quality_gate.issues.join(" | ")}`
+                : ""}
+            </div>
+          ) : null}
+
           <div>Reveal output: {results.reveal_path || "not available"}</div>
           <div>PPTX output: {results.pptx_path || "not available"}</div>
           <div>Notes path: {results.notes_path || "not available"}</div>

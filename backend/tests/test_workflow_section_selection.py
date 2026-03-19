@@ -21,6 +21,7 @@ from app.orchestrator.workflow import (
     _apply_citation_purpose_policy,
     _apply_generated_visual_last_resort_policy,
     _apply_reference_citation_policy,
+    _evaluate_quality_gate,
     _enforce_slide_density_and_target_count,
     _ensure_reference_index_coverage,
     _normalize_reference_citation_labels,
@@ -115,6 +116,98 @@ References
 
         self.assertEqual(len(selected), 1)
         self.assertEqual(selected[0].section_title, "Discussion")
+
+
+class WorkflowQualityGateTests(unittest.TestCase):
+    def _build_plan(self, slide_count: int) -> PresentationPlan:
+        slides: list[dict[str, object]] = []
+        for index in range(1, slide_count + 1):
+            role = "title" if index == 1 else "discussion"
+            slides.append(
+                {
+                    "slide_number": index,
+                    "slide_role": role,
+                    "title": f"Slide {index}",
+                    "objective": "Objective",
+                    "key_points": ["Point A", "Point B", "Point C", "Point D"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "default",
+                }
+            )
+
+        return PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": max(1, slide_count),
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": slides,
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+    def test_quality_gate_fails_when_slide_count_is_too_low(self) -> None:
+        plan = self._build_plan(slide_count=9)
+        gate = _evaluate_quality_gate(
+            plan=plan,
+            repetition_metrics={"bullet": {}, "slide": {}},
+            target_slide_count=15,
+            deck_risk_level="medium",
+        )
+
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["status"], "failed_with_quality_gate")
+        self.assertTrue(any("Slide-count quality gate failed" in item for item in gate["issues"]))
+
+    def test_quality_gate_fails_on_high_deck_risk(self) -> None:
+        plan = self._build_plan(slide_count=15)
+        gate = _evaluate_quality_gate(
+            plan=plan,
+            repetition_metrics={"bullet": {}, "slide": {}},
+            target_slide_count=15,
+            deck_risk_level="high",
+        )
+
+        self.assertFalse(gate["passed"])
+        self.assertTrue(any("deck_risk_level is high" in item for item in gate["issues"]))
+
+    def test_quality_gate_passes_for_balanced_output(self) -> None:
+        plan = self._build_plan(slide_count=14)
+        gate = _evaluate_quality_gate(
+            plan=plan,
+            repetition_metrics={
+                "bullet": {
+                    "total": 56,
+                    "exact_unique_ratio": 0.9,
+                    "near_duplicate_pair_count": 2,
+                },
+                "slide": {
+                    "near_duplicate_pair_count": 0,
+                },
+            },
+            target_slide_count=15,
+            deck_risk_level="medium",
+        )
+
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["status"], "passed")
+        self.assertEqual(gate["issues"], [])
 
 
 class WorkflowVisualPolicyTests(unittest.TestCase):
@@ -215,6 +308,210 @@ class WorkflowVisualPolicyTests(unittest.TestCase):
         self.assertEqual(first_visual.asset_id, "A_FIG_01")
         self.assertEqual(first_visual.source_origin, "source_paper")
         self.assertIn("Source-first visual policy", updated.global_warnings[0])
+
+    def test_infers_source_artifact_from_section_support(self) -> None:
+        plan = PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": 10,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "slide_role": "discussion",
+                        "title": "Discussion",
+                        "objective": "Discuss",
+                        "key_points": ["KP"],
+                        "must_avoid": [],
+                        "visuals": [
+                            {
+                                "visual_type": "generated_conceptual",
+                                "asset_id": "GV01",
+                                "source_origin": "generated",
+                                "usage_mode": "conceptual",
+                                "placement_hint": "center_focus",
+                                "why_this_visual": "Explain mechanism",
+                            }
+                        ],
+                        "source_support": [
+                            {
+                                "support_type": "source_section",
+                                "support_id": "s1",
+                                "support_note": "Section support only",
+                            }
+                        ],
+                        "citations": [{"short_citation": "Source", "source_kind": "source_paper"}],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    }
+                ],
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+        manifest = ArtifactManifest.model_validate(
+            {
+                "artifacts": [
+                    {
+                        "artifact_id": "A_FIG_01",
+                        "artifact_label": "Figure 1",
+                        "artifact_type": "figure",
+                        "page_numbers": [1],
+                        "section_id": "S01",
+                        "caption": "Caption",
+                        "nearby_context_summary": "Summary",
+                        "file_path": "source/SRC_P01_IMG01.jpg",
+                        "extraction_quality": "high",
+                        "readability_for_presentation": "high",
+                        "core_message": "Message",
+                        "presentation_value": "high",
+                        "recommended_action": "recreate_carefully",
+                        "recommendation_rationale": "Good",
+                        "must_preserve_if_adapted": [],
+                        "distortion_risk": "low",
+                        "ambiguities": [],
+                        "notes": [],
+                    }
+                ],
+                "summary": {
+                    "artifact_count": 1,
+                    "high_value_artifact_ids": ["A_FIG_01"],
+                    "high_risk_artifact_ids": [],
+                    "equation_artifact_ids": [],
+                    "warnings": [],
+                },
+            }
+        )
+
+        updated = _apply_source_first_visual_policy(
+            plan=plan,
+            artifact_manifest=manifest,
+            asset_map={"A_FIG_01": "C:/tmp/src.png"},
+        )
+
+        self.assertEqual(updated.slides[0].visuals[0].asset_id, "A_FIG_01")
+        self.assertTrue(any(item.support_type == "source_artifact" for item in updated.slides[0].source_support))
+        self.assertTrue(any("inferred source artifact" in note.lower() for note in updated.slides[0].confidence_notes))
+
+    def test_section_inference_does_not_reuse_same_artifact(self) -> None:
+        plan = PresentationPlan.model_validate(
+            {
+                "deck_metadata": {
+                    "title": "Deck",
+                    "subtitle": "Sub",
+                    "language": "en",
+                    "presentation_style": "journal_club",
+                    "target_audience": "research_specialists",
+                    "target_duration_minutes": 20,
+                    "target_slide_count": 10,
+                },
+                "narrative_arc": {
+                    "overall_story": "Story",
+                    "audience_adaptation_notes": [],
+                    "language_adaptation_notes": [],
+                },
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "slide_role": "discussion",
+                        "title": "Slide One",
+                        "objective": "Discuss",
+                        "key_points": ["KP1"],
+                        "must_avoid": [],
+                        "visuals": [],
+                        "source_support": [
+                            {
+                                "support_type": "source_section",
+                                "support_id": "s1",
+                                "support_note": "Section support",
+                            }
+                        ],
+                        "citations": [{"short_citation": "Source", "source_kind": "source_paper"}],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    },
+                    {
+                        "slide_number": 2,
+                        "slide_role": "discussion",
+                        "title": "Slide Two",
+                        "objective": "Discuss",
+                        "key_points": ["KP2"],
+                        "must_avoid": [],
+                        "visuals": [],
+                        "source_support": [
+                            {
+                                "support_type": "source_section",
+                                "support_id": "s1",
+                                "support_note": "Section support",
+                            }
+                        ],
+                        "citations": [{"short_citation": "Source", "source_kind": "source_paper"}],
+                        "speaker_note_hooks": [],
+                        "confidence_notes": [],
+                        "layout_hint": "default",
+                    },
+                ],
+                "global_warnings": [],
+                "plan_confidence": "medium",
+            }
+        )
+
+        manifest = ArtifactManifest.model_validate(
+            {
+                "artifacts": [
+                    {
+                        "artifact_id": "A_FIG_01",
+                        "artifact_label": "Figure 1",
+                        "artifact_type": "figure",
+                        "page_numbers": [1],
+                        "section_id": "S01",
+                        "caption": "Caption",
+                        "nearby_context_summary": "Summary",
+                        "file_path": "source/SRC_P01_IMG01.jpg",
+                        "extraction_quality": "high",
+                        "readability_for_presentation": "high",
+                        "core_message": "Message",
+                        "presentation_value": "high",
+                        "recommended_action": "recreate_carefully",
+                        "recommendation_rationale": "Good",
+                        "must_preserve_if_adapted": [],
+                        "distortion_risk": "low",
+                        "ambiguities": [],
+                        "notes": [],
+                    }
+                ],
+                "summary": {
+                    "artifact_count": 1,
+                    "high_value_artifact_ids": ["A_FIG_01"],
+                    "high_risk_artifact_ids": [],
+                    "equation_artifact_ids": [],
+                    "warnings": [],
+                },
+            }
+        )
+
+        updated = _apply_source_first_visual_policy(
+            plan=plan,
+            artifact_manifest=manifest,
+            asset_map={"A_FIG_01": "C:/tmp/src.png"},
+        )
+
+        self.assertTrue(any(item.support_type == "source_artifact" for item in updated.slides[0].source_support))
+        self.assertFalse(any(item.support_type == "source_artifact" for item in updated.slides[1].source_support))
 
     def test_adds_must_avoid_on_evidence_slide_with_conceptual(self) -> None:
         plan = PresentationPlan.model_validate(
@@ -1515,6 +1812,63 @@ class WorkflowStructuralOrderingTests(unittest.TestCase):
         titles = [slide.title for slide in updated.slides]
         self.assertIn("Results: Supporting Detail", titles)
         self.assertNotIn("Results: Supporting Detail (2)", titles)
+
+    def test_backfill_can_add_multiple_support_slides_from_one_section(self) -> None:
+        plan = self._build_plan(
+            [
+                {
+                    "slide_number": 1,
+                    "slide_role": "title",
+                    "title": "Deck",
+                    "objective": "Open",
+                    "key_points": ["Title", "Authors", "Venue"],
+                    "must_avoid": [],
+                    "visuals": [],
+                    "source_support": [],
+                    "citations": [],
+                    "speaker_note_hooks": [],
+                    "confidence_notes": [],
+                    "layout_hint": "title_slide",
+                }
+            ],
+            target_count=4,
+        )
+
+        sections = [
+            {
+                "section_id": "S61",
+                "section_title": "Results",
+                "section_role": ["experiment_result_interpretation"],
+                "key_claims": [
+                    {"claim": "Result A improves baseline by 10%", "notes": "validated on held-out split"},
+                    {"claim": "Result B improves calibration", "notes": "robust across seeds"},
+                    {"claim": "Result C reduces error rate", "notes": "stable under drift"},
+                    {"claim": "Result D improves recall", "notes": "no precision collapse"},
+                ],
+                "important_details": [
+                    "Ablation confirms contribution of retrieval grounding.",
+                    "Confidence intervals remain narrow in all reported settings.",
+                    "Latency overhead remains within operational budget.",
+                    "Failure cases are concentrated in low-resource domains.",
+                    "Cross-domain transfer remains positive across benchmarks.",
+                    "Sensitivity analysis shows robust threshold behavior.",
+                ],
+                "summary": "Results consistently favor the proposed delegation framework.",
+                "why_it_matters": "Establishes reliability for practical deployment.",
+            }
+        ]
+
+        updated = _enforce_slide_density_and_target_count(
+            plan=plan,
+            section_analyses=sections,
+            target_slide_count=4,
+        )
+
+        titles = [slide.title for slide in updated.slides]
+        self.assertEqual(len(updated.slides), 4)
+        self.assertIn("Results: Supporting Detail", titles)
+        self.assertIn("Results: Supporting Detail (2)", titles)
+        self.assertIn("Results: Supporting Detail (3)", titles)
 
     def test_reduces_repeated_long_bullets_across_slides(self) -> None:
         repeated = (

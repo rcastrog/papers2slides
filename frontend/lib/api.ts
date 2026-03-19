@@ -89,6 +89,21 @@ export type RunResultsResponse = {
     slide?: RepetitionLevelSummary;
     citation?: CitationRepetitionSummary;
   };
+  quality_gate?: {
+    passed?: boolean;
+    status?: string;
+    issues?: string[];
+    metrics?: {
+      actual_slide_count?: number;
+      target_slide_count?: number;
+      minimum_required_slide_count?: number;
+      bullet_total?: number;
+      bullet_exact_unique_ratio?: number;
+      bullet_near_duplicate_pair_count?: number;
+      slide_near_duplicate_pair_count?: number;
+      deck_risk_level?: string;
+    };
+  };
 };
 
 export type RepetitionExample = {

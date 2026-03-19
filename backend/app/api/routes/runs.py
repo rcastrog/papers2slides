@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,24 @@ from app.services.run_inspector import RunInspector
 from app.storage.run_manager import RunManager
 
 router = APIRouter(tags=["runs"])
-_STALLED_RUNNING_SECONDS = 300
+
+
+def _read_stall_timeout_seconds(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except (TypeError, ValueError):
+        return default
+    return max(0, value)
+
+
+_STALLED_RUNNING_SECONDS = _read_stall_timeout_seconds("RUN_STATUS_STALLED_RUNNING_SECONDS", 300)
+_STALLED_IN_STAGE_SECONDS = max(
+    _STALLED_RUNNING_SECONDS,
+    _read_stall_timeout_seconds("RUN_STATUS_STALLED_IN_STAGE_SECONDS", 1800),
+)
 
 
 @router.get("/runs/{run_id}", response_model=RunStatusResponse)
@@ -125,7 +143,7 @@ def cancel_run(run_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Run manifest not found")
 
     status = str(manifest.get("status", "")).strip().lower()
-    if status in {"completed", "completed_with_warnings", "failed", "cancelled"}:
+    if status in {"completed", "completed_with_warnings", "failed", "failed_with_quality_gate", "cancelled"}:
         return {
             "run_id": run_id,
             "status": manifest.get("status", "unknown"),
@@ -180,7 +198,7 @@ def retry_run(run_id: str, background_tasks: BackgroundTasks) -> JobSubmissionRe
         raise HTTPException(status_code=404, detail="Run manifest not found")
 
     source_status = str(source_manifest.get("status", "")).strip().lower()
-    if source_status != "failed":
+    if source_status not in {"failed", "failed_with_quality_gate"}:
         raise HTTPException(status_code=400, detail="Only failed runs can be retried")
 
     source_pdf_path = _find_source_pdf_for_retry(source_run_path)
@@ -601,7 +619,13 @@ def _finalize_stalled_manifest_if_needed(manifest: dict[str, Any], *, stale_seco
     )
     current_is_completed = bool(current_stage) and current_stage in completed_stages
 
-    if stale_seconds < _STALLED_RUNNING_SECONDS or has_running_entry or not current_is_completed:
+    if stale_seconds < _STALLED_RUNNING_SECONDS:
+        return manifest, False
+
+    stalled_after_stage_boundary = (not has_running_entry) and current_is_completed
+    stalled_mid_stage = stale_seconds >= _STALLED_IN_STAGE_SECONDS and (has_running_entry or not current_is_completed)
+
+    if not stalled_after_stage_boundary and not stalled_mid_stage:
         return manifest, False
 
     updated = dict(manifest)
@@ -609,10 +633,16 @@ def _finalize_stalled_manifest_if_needed(manifest: dict[str, Any], *, stale_seco
     if not isinstance(errors, list):
         errors = []
 
-    stall_message = (
-        f"Run auto-finalized as failed after stalling post-{current_stage} "
-        f"for {int(stale_seconds)}s without stage progress."
-    )
+    if stalled_after_stage_boundary:
+        stall_message = (
+            f"Run auto-finalized as failed after stalling post-{current_stage} "
+            f"for {int(stale_seconds)}s without stage progress."
+        )
+    else:
+        stall_message = (
+            f"Run auto-finalized as failed after stalling during {current_stage or 'unknown'} "
+            f"for {int(stale_seconds)}s without manifest updates."
+        )
     if stall_message not in errors:
         errors.append(stall_message)
 

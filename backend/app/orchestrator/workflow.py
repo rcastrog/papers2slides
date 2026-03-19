@@ -103,6 +103,11 @@ _SEMANTIC_STOPWORDS = {
     "with",
     "y",
 }
+_QUALITY_GATE_MIN_SLIDE_RATIO = 0.8
+_QUALITY_GATE_MIN_SLIDE_ABSOLUTE = 3
+_QUALITY_GATE_MAX_BULLET_NEAR_DUPLICATES = 6
+_QUALITY_GATE_MIN_BULLET_UNIQUE_RATIO = 0.72
+_QUALITY_GATE_MAX_SLIDE_NEAR_DUPLICATES = 3
 
 
 class WorkflowCancelledError(RuntimeError):
@@ -222,6 +227,69 @@ def compute_repetition_metrics_from_payload(payload: dict[str, Any] | None) -> d
     except Exception:
         return {}
     return compute_repetition_metrics(plan)
+
+
+def _evaluate_quality_gate(
+    *,
+    plan: PresentationPlan,
+    repetition_metrics: dict[str, Any],
+    target_slide_count: int,
+    deck_risk_level: str,
+) -> dict[str, Any]:
+    """Evaluate deterministic quality thresholds without blocking artifact generation."""
+    issues: list[str] = []
+
+    actual_slide_count = len(plan.slides)
+    target = max(1, int(target_slide_count or actual_slide_count or 1))
+    min_required = max(_QUALITY_GATE_MIN_SLIDE_ABSOLUTE, int(target * _QUALITY_GATE_MIN_SLIDE_RATIO + 0.999))
+    if actual_slide_count < min_required:
+        issues.append(
+            f"Slide-count quality gate failed: produced {actual_slide_count} slides, expected at least {min_required} "
+            f"for target {target}."
+        )
+
+    bullet_metrics = repetition_metrics.get("bullet", {}) if isinstance(repetition_metrics, dict) else {}
+    slide_metrics = repetition_metrics.get("slide", {}) if isinstance(repetition_metrics, dict) else {}
+
+    bullet_total = int(bullet_metrics.get("total", 0) or 0)
+    bullet_unique_ratio = float(bullet_metrics.get("exact_unique_ratio", 1.0) or 1.0)
+    bullet_near_duplicates = int(bullet_metrics.get("near_duplicate_pair_count", 0) or 0)
+    if bullet_total >= 12 and bullet_unique_ratio < _QUALITY_GATE_MIN_BULLET_UNIQUE_RATIO:
+        issues.append(
+            "Bullet uniqueness quality gate failed: "
+            f"exact_unique_ratio={bullet_unique_ratio:.3f} is below {_QUALITY_GATE_MIN_BULLET_UNIQUE_RATIO:.2f}."
+        )
+    if bullet_near_duplicates > _QUALITY_GATE_MAX_BULLET_NEAR_DUPLICATES:
+        issues.append(
+            "Bullet near-duplicate quality gate failed: "
+            f"near_duplicate_pair_count={bullet_near_duplicates} exceeds {_QUALITY_GATE_MAX_BULLET_NEAR_DUPLICATES}."
+        )
+
+    slide_near_duplicates = int(slide_metrics.get("near_duplicate_pair_count", 0) or 0)
+    if slide_near_duplicates > _QUALITY_GATE_MAX_SLIDE_NEAR_DUPLICATES:
+        issues.append(
+            "Slide near-duplicate quality gate failed: "
+            f"near_duplicate_pair_count={slide_near_duplicates} exceeds {_QUALITY_GATE_MAX_SLIDE_NEAR_DUPLICATES}."
+        )
+
+    if str(deck_risk_level or "").strip().lower() == "high":
+        issues.append("Deck-risk quality gate failed: final audit deck_risk_level is high.")
+
+    return {
+        "passed": not issues,
+        "status": "passed" if not issues else "failed_with_quality_gate",
+        "issues": issues,
+        "metrics": {
+            "actual_slide_count": actual_slide_count,
+            "target_slide_count": target,
+            "minimum_required_slide_count": min_required,
+            "bullet_total": bullet_total,
+            "bullet_exact_unique_ratio": round(bullet_unique_ratio, 4),
+            "bullet_near_duplicate_pair_count": bullet_near_duplicates,
+            "slide_near_duplicate_pair_count": slide_near_duplicates,
+            "deck_risk_level": str(deck_risk_level),
+        },
+    }
 
 
 def _select_repetition_anchor(*, key_points: list[str], objective: str, title: str) -> str:
@@ -1347,6 +1415,14 @@ def run_workflow(
         "warnings": workflow_warnings,
     }
 
+    repetition_metrics = compute_repetition_metrics(presentation_plan)
+    quality_gate = _evaluate_quality_gate(
+        plan=presentation_plan,
+        repetition_metrics=repetition_metrics,
+        target_slide_count=normalized_options.get("target_slide_count", len(presentation_plan.slides)),
+        deck_risk_level=final_audit.deck_risk_level,
+    )
+
     results_summary = {
         "run_id": run_id,
         "reveal_path": final_paths["reveal_entry_html"],
@@ -1372,14 +1448,26 @@ def run_workflow(
             "deck_risk_level": final_audit.deck_risk_level,
             "unresolved_high_severity_findings_count": unresolved_high,
         },
-        "repetition_metrics": compute_repetition_metrics(presentation_plan),
+        "repetition_metrics": repetition_metrics,
+        "quality_gate": quality_gate,
     }
 
     manifest_warnings = [*workflow_warnings, *list(final_audit.global_warnings)]
+    manifest_warnings.extend(quality_gate.get("issues", []))
+
+    if not quality_gate.get("passed", True):
+        workflow_warnings.append(
+            "Quality gate failed; presentations were still produced for inspection."
+        )
+
+    if not quality_gate.get("passed", True):
+        final_status = "failed_with_quality_gate"
+    else:
+        final_status = "completed_with_warnings" if (unresolved_high > 0 or fallback_stage_count > 0 or bool(manifest_warnings)) else "completed"
 
     final_manifest = {
         "run_id": run_id,
-        "status": "completed_with_warnings" if (unresolved_high > 0 or fallback_stage_count > 0 or bool(manifest_warnings)) else "completed",
+        "status": final_status,
         "current_stage": "A11",
         "llm_mode": llm_mode,
         "llm_mode_reason": llm_mode_reason,
@@ -1407,6 +1495,7 @@ def run_workflow(
             "audit_findings_count": audit_findings_count,
             "unresolved_high_severity_findings_count": unresolved_high,
             "deck_risk_level": final_audit.deck_risk_level,
+            "quality_gate": quality_gate,
         },
     }
 
@@ -1882,12 +1971,61 @@ def _apply_source_first_visual_policy(
     updated = False
 
     visual_type_for_artifact: dict[str, str] = {}
+    artifacts_by_id: dict[str, Any] = {}
+    section_artifact_candidates: dict[str, list[str]] = {}
+    allowed_recommended_actions = {"reuse_directly", "crop_or_clean", "recreate_carefully"}
+
+    def _normalized_section_key(section_id: str) -> str:
+        text = str(section_id or "").strip().upper()
+        match = re.match(r"^S0*(\d+)$", text)
+        if match:
+            return f"S{int(match.group(1))}"
+        return text
+
+    def _artifact_priority(artifact: Any) -> tuple[int, int, int, str]:
+        action_rank = {
+            "reuse_directly": 0,
+            "crop_or_clean": 1,
+            "recreate_carefully": 2,
+            "replace_with_conceptual_visual": 3,
+            "avoid_using": 4,
+        }
+        value_rank = {"high": 0, "medium": 1, "low": 2}
+        risk_rank = {"low": 0, "medium": 1, "high": 2}
+        return (
+            action_rank.get(str(getattr(artifact, "recommended_action", "")), 9),
+            value_rank.get(str(getattr(artifact, "presentation_value", "")), 9),
+            risk_rank.get(str(getattr(artifact, "distortion_risk", "")), 9),
+            str(getattr(artifact, "artifact_id", "")),
+        )
+
     for artifact in artifact_manifest.artifacts:
+        artifacts_by_id[artifact.artifact_id] = artifact
         if artifact.artifact_id not in asset_map:
             continue
         if not asset_map.get(artifact.artifact_id):
             continue
+        if artifact.recommended_action not in allowed_recommended_actions:
+            continue
         visual_type_for_artifact[artifact.artifact_id] = _map_artifact_type_to_visual_type(artifact.artifact_type)
+        section_key = _normalized_section_key(artifact.section_id)
+        if section_key:
+            section_artifact_candidates.setdefault(section_key, []).append(artifact.artifact_id)
+
+    for section_key, artifact_ids in section_artifact_candidates.items():
+        section_artifact_candidates[section_key] = sorted(
+            artifact_ids,
+            key=lambda item: _artifact_priority(artifacts_by_id[item]),
+        )
+
+    used_artifact_ids: set[str] = set()
+    for slide in payload.get("slides", []):
+        for visual in slide.get("visuals", []):
+            if visual.get("source_origin") == "source_paper" and visual.get("asset_id"):
+                used_artifact_ids.add(str(visual.get("asset_id")))
+        for support in slide.get("source_support", []):
+            if support.get("support_type") == "source_artifact" and support.get("support_id"):
+                used_artifact_ids.add(str(support.get("support_id")))
 
     evidence_roles = {"result", "discussion", "limitation", "contribution"}
 
@@ -1898,6 +2036,40 @@ def _apply_source_first_visual_policy(
             if item.get("support_type") == "source_artifact"
             and item.get("support_id") in visual_type_for_artifact
         ]
+
+        if not support_artifact_ids:
+            inferred_artifact_id = ""
+            section_support_ids = [
+                _normalized_section_key(str(item.get("support_id", "")))
+                for item in slide.get("source_support", [])
+                if item.get("support_type") == "source_section"
+            ]
+
+            for section_key in section_support_ids:
+                candidates = section_artifact_candidates.get(section_key, [])
+                if not candidates:
+                    continue
+                inferred_artifact_id = next((item for item in candidates if item not in used_artifact_ids), "")
+                if inferred_artifact_id:
+                    break
+
+            if inferred_artifact_id:
+                support_artifact_ids = [inferred_artifact_id]
+                source_support = list(slide.get("source_support", []))
+                source_support.append(
+                    {
+                        "support_type": "source_artifact",
+                        "support_id": inferred_artifact_id,
+                        "support_note": "Auto-policy: inferred from source section support.",
+                    }
+                )
+                slide["source_support"] = source_support
+                used_artifact_ids.add(inferred_artifact_id)
+                updated = True
+
+                notes = list(slide.get("confidence_notes", []))
+                notes.append("Auto-policy: inferred source artifact from section-level support.")
+                slide["confidence_notes"] = notes
 
         visuals = slide.get("visuals", [])
         has_source_visual = any(item.get("source_origin") == "source_paper" for item in visuals)
@@ -1919,6 +2091,7 @@ def _apply_source_first_visual_policy(
             }
             visuals.insert(0, source_visual)
             updated = True
+            used_artifact_ids.add(artifact_id)
 
             notes = list(slide.get("confidence_notes", []))
             notes.append("Auto-policy: injected source artifact visual to preserve evidence fidelity.")
@@ -2323,13 +2496,23 @@ def _build_supporting_slides_for_target(
     }
 
     needed_support = max(0, target_slide_count - len(existing_slides))
-    max_support_slides = min(needed_support, len(curated_sections))
+    max_support_slides = needed_support
     if max_support_slides <= 0:
         return additional
 
+    def _windowed_pick(items: list[Any], *, start: int, size: int) -> list[Any]:
+        if size <= 0 or not items:
+            return []
+        count = len(items)
+        picked: list[Any] = []
+        for offset in range(min(size, count)):
+            picked.append(items[(start + offset) % count])
+        return picked
+
     start_number = len(existing_slides) + 1
+    section_usage_counts: dict[str, int] = {}
     cursor = 0
-    max_iterations = max(len(curated_sections) * 3, 20)
+    max_iterations = max(max_support_slides * 6, len(curated_sections) * 6, 40)
     iterations = 0
     while len(additional) < max_support_slides:
         iterations += 1
@@ -2337,6 +2520,9 @@ def _build_supporting_slides_for_target(
             break
         section = curated_sections[cursor % len(curated_sections)]
         cursor += 1
+        section_key = str(section.get("section_id", "")).strip() or f"idx_{cursor}"
+        usage_index = section_usage_counts.get(section_key, 0)
+        section_usage_counts[section_key] = usage_index + 1
         role_list = section.get("section_role", [])
         primary_role = role_list[0] if isinstance(role_list, list) and role_list else "experiment_result_interpretation"
         slide_role = {
@@ -2349,7 +2535,17 @@ def _build_supporting_slides_for_target(
         }.get(str(primary_role), "appendix_like_support")
 
         key_points: list[str] = []
-        for claim in section.get("key_claims", [])[:3]:
+        claim_items = section.get("key_claims", [])
+        if not isinstance(claim_items, list):
+            claim_items = []
+        detail_items = section.get("important_details", [])
+        if not isinstance(detail_items, list):
+            detail_items = []
+
+        claim_window = _windowed_pick(claim_items, start=usage_index * 3, size=3)
+        detail_window = _windowed_pick(detail_items, start=usage_index * 2, size=2)
+
+        for claim in claim_window:
             if isinstance(claim, dict):
                 claim_text = str(claim.get("claim", "")).strip()
                 note_text = str(claim.get("notes", "")).strip()
@@ -2359,7 +2555,7 @@ def _build_supporting_slides_for_target(
                 elif claim_text:
                     key_points.append(claim_text)
 
-        for detail in section.get("important_details", [])[:2]:
+        for detail in detail_window:
             detail_text = str(detail).strip()
             if detail_text and detail_text not in key_points:
                 key_points.append(detail_text)

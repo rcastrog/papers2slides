@@ -20,6 +20,7 @@ export function RunStatus({ runId }: RunStatusProps) {
   const [hasRevealOutput, setHasRevealOutput] = useState(false);
   const [hasPptxOutput, setHasPptxOutput] = useState(false);
   const [repetitionMetrics, setRepetitionMetrics] = useState<Record<string, unknown> | null>(null);
+  const [qualityGate, setQualityGate] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,14 +49,14 @@ export function RunStatus({ runId }: RunStatusProps) {
     };
   }, [runId]);
 
-  const isCompleted = useMemo(() => {
+  const isResultsAvailable = useMemo(() => {
     if (!status) return false;
-    return status.status === "completed" || status.status === "completed_with_warnings";
+    return status.status === "completed" || status.status === "completed_with_warnings" || status.status === "failed_with_quality_gate";
   }, [status]);
 
   const isTerminal = useMemo(() => {
     if (!status) return false;
-    return ["completed", "completed_with_warnings", "failed", "cancelled"].includes(status.status);
+    return ["completed", "completed_with_warnings", "failed", "failed_with_quality_gate", "cancelled"].includes(status.status);
   }, [status]);
 
   const canCancel = useMemo(() => {
@@ -70,17 +71,18 @@ export function RunStatus({ runId }: RunStatusProps) {
 
   const canRetry = useMemo(() => {
     if (!status) return false;
-    return status.status === "failed";
+    return status.status === "failed" || status.status === "failed_with_quality_gate";
   }, [status]);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadOutputAvailability() {
-      if (!isCompleted) {
+      if (!isResultsAvailable) {
         setHasRevealOutput(false);
         setHasPptxOutput(false);
         setRepetitionMetrics(null);
+        setQualityGate(null);
         return;
       }
 
@@ -90,12 +92,14 @@ export function RunStatus({ runId }: RunStatusProps) {
           setHasRevealOutput(Boolean(results.reveal_path));
           setHasPptxOutput(Boolean(results.pptx_path));
           setRepetitionMetrics((results.repetition_metrics as Record<string, unknown> | undefined) ?? null);
+          setQualityGate((results.quality_gate as Record<string, unknown> | undefined) ?? null);
         }
       } catch {
         if (!cancelled) {
           setHasRevealOutput(false);
           setHasPptxOutput(false);
           setRepetitionMetrics(null);
+          setQualityGate(null);
         }
       }
     }
@@ -105,7 +109,7 @@ export function RunStatus({ runId }: RunStatusProps) {
     return () => {
       cancelled = true;
     };
-  }, [isCompleted, runId]);
+  }, [isResultsAvailable, runId]);
 
   function handleOpenReveal() {
     const revealUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/reveal/index.html`;
@@ -172,6 +176,7 @@ export function RunStatus({ runId }: RunStatusProps) {
   const warningInsights = useMemo(() => buildWarningInsights(status), [status]);
   const repetitionSummary = useMemo(() => buildRepetitionSummary(repetitionMetrics), [repetitionMetrics]);
   const repetitionHighlights = useMemo(() => buildRepetitionHighlights(repetitionMetrics), [repetitionMetrics]);
+  const qualityGateIssues = useMemo(() => buildQualityGateIssues(qualityGate), [qualityGate]);
   const retrievalSummary = status?.retrieval_summary;
 
   return (
@@ -240,6 +245,13 @@ export function RunStatus({ runId }: RunStatusProps) {
 
       {!isTerminal ? <div className="muted">Polling every 3s until completion...</div> : null}
 
+      {status?.status === "failed_with_quality_gate" ? (
+        <div className="error" style={{ overflowWrap: "anywhere" }}>
+          Quality gate failed. Presentations were still generated for inspection.
+          {qualityGateIssues.length > 0 ? ` Reasons: ${qualityGateIssues.join(" | ")}` : ""}
+        </div>
+      ) : null}
+
       <div className="panel stack">
         <h3 className="section-title">Warnings</h3>
         <div className="muted" style={{ overflowWrap: "anywhere" }}>
@@ -296,8 +308,8 @@ export function RunStatus({ runId }: RunStatusProps) {
 
       {actionMessage ? <div className="success">{actionMessage}</div> : null}
 
-      {isCompleted && !hasRevealOutput ? <div className="muted">Reveal output was not generated for this run.</div> : null}
-      {isCompleted && !hasPptxOutput ? <div className="muted">PPTX output was not generated for this run.</div> : null}
+      {isResultsAvailable && !hasRevealOutput ? <div className="muted">Reveal output was not generated for this run.</div> : null}
+      {isResultsAvailable && !hasPptxOutput ? <div className="muted">PPTX output was not generated for this run.</div> : null}
 
       {error ? <div className="error">{error}</div> : null}
 
@@ -309,10 +321,10 @@ export function RunStatus({ runId }: RunStatusProps) {
               {isCancelling ? "Requesting cancel..." : "Stop run"}
             </button>
           ) : null}
-          <button className="btn-secondary" type="button" disabled={!isCompleted || !hasRevealOutput} onClick={handleOpenReveal}>
+          <button className="btn-secondary" type="button" disabled={!isResultsAvailable || !hasRevealOutput} onClick={handleOpenReveal}>
             Open Reveal
           </button>
-          <button className="btn-secondary" type="button" disabled={!isCompleted || !hasPptxOutput} onClick={handleOpenDeck}>
+          <button className="btn-secondary" type="button" disabled={!isResultsAvailable || !hasPptxOutput} onClick={handleOpenDeck}>
             Open Deck
           </button>
           {canRecoverA11 ? (
@@ -325,15 +337,15 @@ export function RunStatus({ runId }: RunStatusProps) {
               {isRetrying ? "Starting retry..." : "Retry run"}
             </button>
           ) : null}
-          {isCompleted ? <Link href={`/results/${runId}`}>View results</Link> : null}
-          {isCompleted ? <Link href={`/inspect/${runId}`}>Inspect run</Link> : null}
+          {isResultsAvailable ? <Link href={`/results/${runId}`}>View results</Link> : null}
+          {isResultsAvailable ? <Link href={`/inspect/${runId}`}>Inspect run</Link> : null}
         </div>
       </div>
 
       <div className="panel stack">
         <h3 className="section-title">Action hints</h3>
         {canCancel ? <div className="muted">Stop run: Requests a safe stop at the next stage boundary.</div> : null}
-        {isCompleted ? (
+        {isResultsAvailable ? (
           <div className="muted">
             Open Reveal: Opens the HTML slide deck generated for this run.
             {!hasRevealOutput ? " (Unavailable because no Reveal output was generated.)" : ""}
@@ -341,7 +353,7 @@ export function RunStatus({ runId }: RunStatusProps) {
         ) : (
           <div className="muted">Open Reveal: Available after the run completes and Reveal output exists.</div>
         )}
-        {isCompleted ? (
+        {isResultsAvailable ? (
           <div className="muted">
             Open Deck: Opens the repaired PPTX deck file for editing.
             {!hasPptxOutput ? " (Unavailable because no PPTX output was generated.)" : ""}
@@ -490,6 +502,19 @@ function buildRepetitionHighlights(metrics: Record<string, unknown> | null): str
   }
 
   return highlights;
+}
+
+function buildQualityGateIssues(qualityGate: Record<string, unknown> | null): string[] {
+  if (!qualityGate) {
+    return [];
+  }
+  const issues = qualityGate.issues;
+  if (!Array.isArray(issues)) {
+    return [];
+  }
+  return issues
+    .map((item) => String(item || "").trim())
+    .filter((item) => item.length > 0);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

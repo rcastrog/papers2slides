@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+from fastapi import BackgroundTasks
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -16,8 +19,10 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.api.routes.runs import (
     _build_results_payload,
     _build_retry_configuration,
+    cancel_run,
     _finalize_stalled_manifest_if_needed,
     _find_source_pdf_for_retry,
+    retry_run,
     _resolve_child_path,
     _resolve_reveal_asset_path,
     _resolve_reveal_index_path,
@@ -228,6 +233,64 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
         self.assertFalse(changed)
         self.assertEqual(normalized["status"], "running")
 
+    def test_finalize_stalled_manifest_marks_failed_when_stuck_mid_stage(self) -> None:
+        manifest = {
+            "run_id": "api-job-mid-stage-stalled",
+            "status": "running",
+            "current_stage": "A5",
+            "completed_stages": ["A0", "A1", "A2", "A3", "A4"],
+            "stages": [
+                {"stage": "A0", "status": "completed"},
+                {"stage": "A4", "status": "completed"},
+            ],
+            "errors": [],
+        }
+
+        normalized, changed = _finalize_stalled_manifest_if_needed(manifest, stale_seconds=3600.0)
+
+        self.assertTrue(changed)
+        self.assertEqual(normalized["status"], "failed")
+        self.assertEqual(normalized["failed_stage"], "A5")
+        self.assertTrue(any("stalling during A5" in msg for msg in normalized.get("errors", [])))
+
+    def test_finalize_stalled_manifest_keeps_running_entry_before_in_stage_timeout(self) -> None:
+        manifest = {
+            "run_id": "api-job-mid-stage-active",
+            "status": "running",
+            "current_stage": "A5",
+            "completed_stages": ["A0", "A1", "A2", "A3", "A4"],
+            "stages": [
+                {"stage": "A4", "status": "completed"},
+                {"stage": "A5", "status": "running"},
+            ],
+            "errors": [],
+        }
+
+        normalized, changed = _finalize_stalled_manifest_if_needed(manifest, stale_seconds=900.0)
+
+        self.assertFalse(changed)
+        self.assertEqual(normalized["status"], "running")
+
+    def test_finalize_stalled_manifest_fails_running_entry_after_in_stage_timeout(self) -> None:
+        manifest = {
+            "run_id": "api-job-mid-stage-timeout",
+            "status": "running",
+            "current_stage": "A5",
+            "completed_stages": ["A0", "A1", "A2", "A3", "A4"],
+            "stages": [
+                {"stage": "A4", "status": "completed"},
+                {"stage": "A5", "status": "running"},
+            ],
+            "errors": [],
+        }
+
+        normalized, changed = _finalize_stalled_manifest_if_needed(manifest, stale_seconds=3600.0)
+
+        self.assertTrue(changed)
+        self.assertEqual(normalized["status"], "failed")
+        self.assertEqual(normalized["failed_stage"], "A5")
+        self.assertTrue(any("stalling during A5" in msg for msg in normalized.get("errors", [])))
+
     def test_build_retry_configuration_prefers_job_spec_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             run_path = Path(temp_dir)
@@ -296,6 +359,96 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
             resolved = _resolve_reveal_asset_path(run_path=run_path, asset_path="deck.css")
 
             self.assertEqual(resolved, asset_file)
+
+    def test_retry_run_accepts_failed_with_quality_gate_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runs_root = Path(temp_dir)
+            run_path = runs_root / "api-job_0001"
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "input").mkdir(parents=True, exist_ok=True)
+            (run_path / "input" / "source.pdf").write_bytes(b"pdf")
+
+            manifest = {
+                "run_id": "api-job_0001",
+                "status": "failed_with_quality_gate",
+                "run_summary": {
+                    "job_summary": {
+                        "presentation_style": "journal_club",
+                        "target_audience": "research_specialists",
+                        "language": "en",
+                        "output_formats": ["reveal", "pptx"],
+                        "advanced_options": {},
+                        "repair_on_audit": True,
+                    }
+                },
+            }
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+
+            original_resolve = retry_run.__globals__["_resolve_run_path"]
+            original_execute = retry_run.__globals__["_execute_workflow"]
+            original_manager = retry_run.__globals__["RunManager"]
+
+            class _StubManager:
+                def __init__(self, root: Path) -> None:
+                    self.root = root
+
+                def create_run(self, slug: str = "api-job") -> Path:
+                    path = self.root / "api-job_0002"
+                    path.mkdir(parents=True, exist_ok=True)
+                    return path
+
+                def save_json(self, relative_path: str, payload: dict) -> None:
+                    path = (self.root / "api-job_0002" / relative_path)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+
+            try:
+                retry_run.__globals__["_resolve_run_path"] = lambda _run_id: run_path
+                retry_run.__globals__["_execute_workflow"] = lambda *args, **kwargs: None
+                retry_run.__globals__["RunManager"] = lambda _root: _StubManager(runs_root)
+
+                response = retry_run("api-job_0001", BackgroundTasks())
+                self.assertEqual(response.status, "queued")
+                self.assertEqual(response.run_id, "api-job_0002")
+            finally:
+                retry_run.__globals__["_resolve_run_path"] = original_resolve
+                retry_run.__globals__["_execute_workflow"] = original_execute
+                retry_run.__globals__["RunManager"] = original_manager
+
+    def test_cancel_run_treats_failed_with_quality_gate_as_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "api-job-terminal",
+                        "status": "failed_with_quality_gate",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            original_resolve = cancel_run.__globals__["_resolve_run_path"]
+            original_manager = cancel_run.__globals__["_resolve_run_manager"]
+
+            class _NoopManager:
+                def save_json(self, *_args, **_kwargs) -> None:
+                    raise AssertionError("save_json should not be called for terminal status")
+
+            try:
+                cancel_run.__globals__["_resolve_run_path"] = lambda _run_id: run_path
+                cancel_run.__globals__["_resolve_run_manager"] = lambda _run_path: _NoopManager()
+
+                response = cancel_run("api-job-terminal")
+                self.assertEqual(response["status"], "failed_with_quality_gate")
+                self.assertIn("already terminal", response["message"])
+            finally:
+                cancel_run.__globals__["_resolve_run_path"] = original_resolve
+                cancel_run.__globals__["_resolve_run_manager"] = original_manager
 
 
 if __name__ == "__main__":
