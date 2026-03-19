@@ -767,6 +767,38 @@ class WorkflowRuntimeOptionTests(WorkflowReferenceCitationPolicyTests):
         effective = _resolve_effective_llm_settings(base, options)
         self.assertEqual(effective.llm_temperature, 0.0)
 
+    def test_image_generation_defaults_disabled_without_ui_override(self) -> None:
+        base = LLMSettings(
+            llm_provider="openai",
+            openai_api_key="k",
+            image_gen_enabled=True,
+            image_gen_max_images_per_run=4,
+        )
+        options = _normalize_workflow_options({"advanced_options": {}})
+
+        effective = _resolve_effective_llm_settings(base, options)
+        self.assertFalse(effective.image_gen_enabled)
+
+    def test_image_generation_respects_explicit_ui_enable(self) -> None:
+        base = LLMSettings(
+            llm_provider="openai",
+            openai_api_key="k",
+            image_gen_enabled=False,
+            image_gen_max_images_per_run=4,
+        )
+        options = _normalize_workflow_options(
+            {
+                "advanced_options": {
+                    "image_gen_enabled": True,
+                    "image_gen_max_images_per_run": 2,
+                }
+            }
+        )
+
+        effective = _resolve_effective_llm_settings(base, options)
+        self.assertTrue(effective.image_gen_enabled)
+        self.assertEqual(effective.image_gen_max_images_per_run, 2)
+
     def test_density_policy_reduces_long_repeated_bullets_to_single_occurrence(self) -> None:
         repeated = (
             "This long repeated bullet describes limitations of heuristic delegation "

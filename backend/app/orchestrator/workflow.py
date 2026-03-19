@@ -54,6 +54,7 @@ from app.services.pdf_parser import PDFParseOutput, PDFParser
 from app.services.prompt_loader import PromptLoader
 from app.services.reference_parser import ReferenceParser
 from app.storage.run_manager import RunManager
+from app.utils.error_summary import summarize_exception_for_logs
 from app.utils.section_splitter import SectionCandidate, split_into_sections
 
 
@@ -116,7 +117,7 @@ class WorkflowCancelledError(RuntimeError):
     """Raised when a cooperative cancellation request is detected."""
 
 
-def _build_job_summary(options: dict[str, Any], repair_on_audit: bool) -> dict[str, Any]:
+def _build_job_summary(options: dict[str, Any], repair_on_audit: bool, llm_settings: LLMSettings) -> dict[str, Any]:
     return {
         "presentation_style": options.get("presentation_style"),
         "target_audience": options.get("target_audience"),
@@ -129,7 +130,9 @@ def _build_job_summary(options: dict[str, Any], repair_on_audit: bool) -> dict[s
         "llm_temperature": options.get("llm_temperature"),
         "deterministic_mode": options.get("deterministic_mode"),
         "image_gen_enabled": options.get("image_gen_enabled"),
+        "image_gen_enabled_effective": llm_settings.image_gen_enabled,
         "image_gen_max_images_per_run": options.get("image_gen_max_images_per_run"),
+        "image_gen_max_images_per_run_effective": llm_settings.image_gen_max_images_per_run,
         "repair_on_audit": repair_on_audit,
     }
 
@@ -660,7 +663,7 @@ def run_workflow(
     completed_stages: list[str] = []
     workflow_warnings: list[str] = []
 
-    job_summary = _build_job_summary(normalized_options, repair_on_audit)
+    job_summary = _build_job_summary(normalized_options, repair_on_audit, llm_settings)
 
     initial_manifest = {
         "run_id": run_id,
@@ -755,7 +758,7 @@ def run_workflow(
             stage_entry["status"] = "completed"
         except Exception as exc:
             stage_entry["status"] = "failed"
-            stage_entry["warnings"] = [str(exc)]
+            stage_entry["warnings"] = [summarize_exception_for_logs(exc)]
             stage_entry["finished_at"] = _utc_timestamp()
             stage_entry["duration_ms"] = int((perf_counter() - stage_started_perf) * 1000)
             stage_entries.append(stage_entry)
@@ -1206,7 +1209,7 @@ def run_workflow(
                 asset_map=resolved_asset_map,
             )
         except Exception as exc:
-            workflow_warnings.append(f"PPTX build failed: {exc}")
+            workflow_warnings.append(f"PPTX build failed: {summarize_exception_for_logs(exc)}")
             stage["fallback_used"] = True
             stage["fallback_reason"] = "pptx_build_failed"
             return _build_failed_pptx_result(pptx_output_path, exc)
@@ -1335,7 +1338,9 @@ def run_workflow(
                     asset_map=resolved_asset_map,
                 )
             except Exception as exc:
-                workflow_warnings.append(f"PPTX build failed after repair: {exc}")
+                workflow_warnings.append(
+                    f"PPTX build failed after repair: {summarize_exception_for_logs(exc)}"
+                )
                 local_pptx_result = _build_failed_pptx_result(repaired_pptx_output_path, exc)
             run_manager.save_json("presentation/pptx_build_result_repaired.json", local_pptx_result.model_dump())
 
@@ -1555,7 +1560,7 @@ def _normalize_workflow_options(raw: dict[str, Any] | None) -> dict[str, Any]:
             minimum=1,
             maximum=10,
         ),
-        "image_gen_enabled": _coerce_optional_bool(advanced.get("image_gen_enabled")),
+        "image_gen_enabled": _coerce_bool(advanced.get("image_gen_enabled"), False),
         "image_gen_max_images_per_run": _coerce_optional_int(advanced.get("image_gen_max_images_per_run"), minimum=0, maximum=8),
     }
 
@@ -1565,9 +1570,7 @@ def _resolve_effective_llm_settings(settings: LLMSettings, options: dict[str, An
         "llm_temperature": 0.0 if options["deterministic_mode"] else options["llm_temperature"],
     }
 
-    image_gen_enabled_override = options.get("image_gen_enabled")
-    if image_gen_enabled_override is not None:
-        overrides["image_gen_enabled"] = bool(image_gen_enabled_override)
+    overrides["image_gen_enabled"] = bool(options.get("image_gen_enabled", False))
 
     max_images_override = options.get("image_gen_max_images_per_run")
     if isinstance(max_images_override, int):
@@ -4159,6 +4162,7 @@ def _count_unresolved_high(audit_report: AuditReport) -> int:
 
 def _build_failed_pptx_result(output_path: Path, error: Exception) -> PPTXBuildResult:
     """Build a structured fallback result when PPTX rendering fails."""
+    error_summary = summarize_exception_for_logs(error)
     return PPTXBuildResult.model_validate(
         {
             "build_status": "failed",
@@ -4168,11 +4172,11 @@ def _build_failed_pptx_result(output_path: Path, error: Exception) -> PPTXBuildR
                 "notes_insertion_supported": True,
             },
             "slide_build_results": [],
-            "global_warnings": [f"PPTX build failed: {error}"],
+            "global_warnings": [f"PPTX build failed: {error_summary}"],
             "deviations": [
                 {
                     "type": "other",
-                    "description": f"PPTX render failure: {error}",
+                    "description": f"PPTX render failure: {error_summary}",
                 }
             ],
         }
@@ -4477,8 +4481,9 @@ def _run_reference_retrieval_with_batches(
                 }
             )
         except Exception as exc:
+            failure_summary = summarize_exception_for_logs(exc)
             batch_failures.append(
-                f"A4 batch {batch_index} ({batch_start + 1}-{batch_end}) failed: {exc}"
+                f"A4 batch {batch_index} ({batch_start + 1}-{batch_end}) failed: {failure_summary}"
             )
             continue
 

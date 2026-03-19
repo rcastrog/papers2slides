@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from app.api.schemas import JobSubmissionRequest, JobSubmissionResponse
 from app.orchestrator.workflow import WorkflowCancelledError, run_workflow
 from app.storage.run_manager import RunManager
+from app.utils.error_summary import summarize_exception_for_logs
 
 router = APIRouter(tags=["jobs"])
 
@@ -194,6 +195,7 @@ def _execute_workflow(
         )
     except Exception as exc:
         failed_manifest = _build_failed_manifest(run_path=run_path, fallback=running_manifest, error=exc)
+        error_summary = summarize_exception_for_logs(exc)
         run_manager.save_json("logs/run_manifest.json", failed_manifest)
         run_manager.save_json(
             "logs/workflow_summary.json",
@@ -201,7 +203,7 @@ def _execute_workflow(
                 "run_id": run_path.name,
                 "run_path": str(run_path),
                 "status": "failed",
-                "error": str(exc),
+                "error": error_summary,
                 "completed_stages": failed_manifest.get("completed_stages", []),
             },
         )
@@ -215,11 +217,13 @@ def _build_failed_manifest(run_path: Path, fallback: dict[str, Any], error: Exce
     if not isinstance(existing_errors, list):
         existing_errors = []
 
+    error_summary = summarize_exception_for_logs(error)
+
     failed_manifest = {
         **base,
         "status": "failed",
         "current_stage": base.get("current_stage", "A0"),
-        "errors": [*existing_errors, str(error)],
+        "errors": [*existing_errors, error_summary],
     }
     failed_manifest["failed_stage"] = failed_manifest.get("current_stage", "A0")
     return failed_manifest

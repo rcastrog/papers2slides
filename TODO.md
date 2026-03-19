@@ -19,13 +19,16 @@ ms.topic: how-to
 * [ ] Test in Spanish again
 * [ ] Try other modes and audiences
 * [ ] Review truthfulness of reasons for citation
+* [x] Keep image generation strictly controlled by UI option selection
 
 ## Medium
 
 * [x] Add an icon for the UI so it is less generic
 * [x] Set Run repair-on-audit to true by default
+* [x] Keep generated images disabled by default unless explicitly enabled
 * [ ] More tests with different number of slides
 * [ ] Test URL option
+* [x] Compact verbose validation errors in run warnings and manifests
 
 
 ## Low
