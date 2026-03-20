@@ -5,11 +5,42 @@ ms.date: 2026-03-19
 ms.topic: reference
 ---
 
+## Metric Definitions
+
+This report includes operational and quality metrics computed from each run manifest and quality-gate summary.
+
+| Metric | Definition | Interpretation |
+| --- | --- | --- |
+| total_runs | Number of matrix runs executed in this benchmark report. | Higher means broader coverage of scenario combinations. |
+| completed_runs | Number of runs whose status starts with completed (including completed_with_warnings and failed_with_quality_gate where pipeline execution reached completion). | Distinguishes workflow completion from hard execution failures. |
+| quality_gate_pass_count | Number of runs where quality_gate.passed is true in run_summary. | Direct count of runs that satisfied configured quality thresholds. |
+| quality_gate_pass_rate | quality_gate_pass_count / total_runs. | Primary reliability indicator for generated deck quality across scenarios. |
+| avg_duration_minutes | Mean run duration across all runs, converted from duration_ms. | Higher values indicate slower end-to-end generation for selected scenarios. |
+| avg_bullet_exact_unique_ratio | Mean ratio of unique bullet strings after exact-match normalization, taken from quality metrics. | Values closer to 1.0 indicate less exact bullet repetition. |
+| avg_bullet_near_duplicate_pair_count | Mean number of bullet-pair matches flagged as near-duplicates within a run. | Lower values indicate fewer semantically repetitive bullet pairs. |
+| image_gen_effective_true_count | Number of runs where effective image generation was enabled at execution time. | Confirms whether image generation control policy was actually applied. |
+
+### Breakdown Metric Notes
+
+Each breakdown table (by audience, style, target_slide_count, language, and paper) uses the same aggregation logic:
+
+* runs: Number of benchmark rows in that bucket.
+* quality_gate_pass_rate: Mean of per-run pass flags in that bucket.
+* avg_bullet_exact_unique_ratio: Mean exact uniqueness ratio in that bucket.
+* avg_bullet_near_duplicate_pair_count: Mean near-duplicate bullet-pair count in that bucket.
+* avg_duration_minutes: Mean duration in minutes in that bucket.
+
+### Important Caveats
+
+* These metrics are diagnostic proxies; they are useful for trend detection but do not fully capture pedagogical quality, factual accuracy, or narrative coherence.
+* quality_gate_pass_rate is threshold-dependent and can change when gate criteria are tuned.
+* Repetition metrics are sensitive to language, domain terminology, and slide target size, so cross-bucket comparisons should be interpreted with context.
+
 ## Run Metadata
 
 * Benchmark ID: benchmark_20260319_214229
 * Generated at: 2026-03-20T01:30:51.026551+00:00
-* Runs planned: 24
+* Runs planned: 24/w gm 
 * Runs executed: 24
 
 ## Overall Results
