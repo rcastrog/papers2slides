@@ -90,6 +90,54 @@ Each breakdown table (by audience, style, target_slide_count, language, and pape
 | 2602.11865v1.pdf | 8 | 0.625 | 1.0 | 0.375 | 7.991 |
 | Nowcasting_Econ-Report-v16.pdf | 8 | 0.625 | 0.9966 | 1.5 | 5.321 |
 
+## Interaction Views (Why Audience and Style Can Both Look Best)
+
+One-dimensional summaries can hide interaction effects. The tables below show pairwise combinations so it is easier to interpret style and audience together.
+
+### Style x Audience
+
+| presentation_style | audience | runs | quality_gate_pass_rate | avg_bullet_exact_unique_ratio | avg_bullet_near_duplicate_pair_count |
+| --- | --- | --- | --- | --- | --- |
+| executive_friendly | executive_nontechnical | 3 | 0.6667 | 0.6575 | 2.667 |
+| executive_friendly | students | 3 | 0.0 | 1.0 | 0.667 |
+| journal_club | research_specialists | 3 | 1.0 | 1.0 | 0.0 |
+| journal_club | students | 3 | 0.6667 | 1.0 | 1.333 |
+| teaching | research_specialists | 3 | 0.0 | 1.0 | 0.333 |
+| teaching | technical_adjacent | 3 | 0.3333 | 1.0 | 0.333 |
+| technical_summary | executive_nontechnical | 3 | 1.0 | 1.0 | 0.333 |
+| technical_summary | technical_adjacent | 3 | 1.0 | 1.0 | 0.333 |
+
+### Style x Target Slide Count
+
+| presentation_style | target_slide_count | runs | quality_gate_pass_rate | avg_bullet_exact_unique_ratio | avg_bullet_near_duplicate_pair_count |
+| --- | --- | --- | --- | --- | --- |
+| executive_friendly | 18 | 6 | 0.3333 | 0.8288 | 1.667 |
+| journal_club | 8 | 3 | 1.0 | 1.0 | 0.0 |
+| journal_club | 12 | 3 | 0.6667 | 1.0 | 1.333 |
+| teaching | 12 | 3 | 0.3333 | 1.0 | 0.333 |
+| teaching | 18 | 3 | 0.0 | 1.0 | 0.333 |
+| technical_summary | 8 | 3 | 1.0 | 1.0 | 0.333 |
+| technical_summary | 12 | 3 | 1.0 | 1.0 | 0.333 |
+
+### Audience x Target Slide Count
+
+| audience | target_slide_count | runs | quality_gate_pass_rate | avg_bullet_exact_unique_ratio | avg_bullet_near_duplicate_pair_count |
+| --- | --- | --- | --- | --- | --- |
+| executive_nontechnical | 8 | 3 | 1.0 | 1.0 | 0.333 |
+| executive_nontechnical | 18 | 3 | 0.6667 | 0.6575 | 2.667 |
+| research_specialists | 8 | 3 | 1.0 | 1.0 | 0.0 |
+| research_specialists | 18 | 3 | 0.0 | 1.0 | 0.333 |
+| students | 12 | 3 | 0.6667 | 1.0 | 1.333 |
+| students | 18 | 3 | 0.0 | 1.0 | 0.667 |
+| technical_adjacent | 12 | 6 | 0.6667 | 1.0 | 0.333 |
+
+### Interpretation
+
+* There is no contradiction between technical_summary being best by style and executive_nontechnical being best by audience.
+* executive_nontechnical performance is mixed across slide targets: strong at 8 slides and weaker at 18 slides.
+* technical_summary remains consistently strong in this matrix across both represented audiences.
+* The strongest observed combination in this benchmark is technical_summary + executive_nontechnical + 8 slides.
+
 ## TODO Conclusions
 
 * Bullet repetitiveness status: needs_more_validation
