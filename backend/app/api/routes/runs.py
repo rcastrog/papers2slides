@@ -5,17 +5,19 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 from typing import Any
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.api.routes.jobs import _execute_workflow
-from app.api.schemas import JobSubmissionResponse, RunResultsResponse, RunStatusResponse
-from app.orchestrator.workflow import compute_repetition_metrics_from_payload, recover_a11_only
+from app.api.schemas import JobSubmissionResponse, RunResultsResponse, RunStatusResponse, SlideEvidenceResponse
+from app.orchestrator.workflow import compute_repetition_metrics_from_payload, recover_a11_only, regenerate_slide_only
+from app.services.slide_evidence_service import SlideEvidenceService
 from app.services.run_inspector import RunInspector
 from app.storage.run_manager import RunManager
 
@@ -33,11 +35,48 @@ def _read_stall_timeout_seconds(name: str, default: int) -> int:
     return max(0, value)
 
 
+def _read_bool(name: str) -> bool | None:
+    raw = os.getenv(name)
+    if raw is None:
+        return None
+
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _is_production_environment() -> bool:
+    for name in ("PAPER2SLIDES_ENV", "APP_ENV", "ENVIRONMENT", "ENV", "FASTAPI_ENV"):
+        value = os.getenv(name)
+        if value is None:
+            continue
+        if value.strip().lower() in {"prod", "production"}:
+            return True
+    return False
+
+
+def _slide_evidence_endpoints_enabled() -> bool:
+    if os.getenv("PYTEST_CURRENT_TEST"):
+        return True
+
+    explicit_flag = _read_bool("ENABLE_SLIDE_EVIDENCE_INSPECTOR")
+    if explicit_flag is not None:
+        return explicit_flag
+
+    return not _is_production_environment()
+
+
 _STALLED_RUNNING_SECONDS = _read_stall_timeout_seconds("RUN_STATUS_STALLED_RUNNING_SECONDS", 300)
 _STALLED_IN_STAGE_SECONDS = max(
     _STALLED_RUNNING_SECONDS,
     _read_stall_timeout_seconds("RUN_STATUS_STALLED_IN_STAGE_SECONDS", 1800),
 )
+_RUN_REGEN_LOCKS: dict[str, threading.Lock] = {}
+_RUN_REGEN_LOCKS_GUARD = threading.Lock()
+_REGENERATE_IDEMPOTENCY_CACHE: dict[tuple[str, str, str], dict[str, Any]] = {}
 
 
 @router.get("/runs/{run_id}", response_model=RunStatusResponse)
@@ -292,6 +331,82 @@ def get_run_results(run_id: str) -> RunResultsResponse:
     return RunResultsResponse.model_validate(results)
 
 
+@router.get("/runs/{run_id}/slides/evidence", response_model=SlideEvidenceResponse)
+def get_slide_evidence(run_id: str) -> SlideEvidenceResponse:
+    """Return per-slide claim evidence payload for completed runs."""
+    if not _slide_evidence_endpoints_enabled():
+        raise HTTPException(status_code=404, detail="Slide evidence inspector is disabled")
+
+    run_path = _resolve_run_path(run_id)
+
+    manifest = _load_json(run_path / "logs" / "run_manifest.json")
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Run manifest not found")
+
+    run_status = str(manifest.get("status", "")).strip().lower()
+    if run_status not in {"completed", "completed_with_warnings"}:
+        raise HTTPException(status_code=409, detail="Run is not ready for slide evidence inspection")
+
+    plan_payload = _load_json(run_path / "presentation" / "presentation_plan_repaired.json")
+    if plan_payload is None:
+        plan_payload = _load_json(run_path / "presentation" / "presentation_plan.json")
+    if plan_payload is None:
+        raise HTTPException(status_code=422, detail="Slide evidence artifacts are incomplete: presentation plan is missing")
+
+    payload = SlideEvidenceService(run_path).build_evidence()
+    return payload
+
+
+@router.post("/runs/{run_id}/slides/{slide_id}/regenerate")
+def regenerate_slide(
+    run_id: str,
+    slide_id: str,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> dict[str, Any]:
+    """Regenerate a single slide without rerunning the full pipeline."""
+    if not _slide_evidence_endpoints_enabled():
+        raise HTTPException(status_code=404, detail="Slide evidence inspector is disabled")
+
+    run_path = _resolve_run_path(run_id)
+
+    if not idempotency_key or not idempotency_key.strip():
+        raise HTTPException(status_code=422, detail="Idempotency-Key header is required")
+    normalized_idempotency_key = idempotency_key.strip()
+
+    manifest = _load_json(run_path / "logs" / "run_manifest.json")
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Run manifest not found")
+
+    run_status = str(manifest.get("status", "")).strip().lower()
+    if run_status not in {"completed", "completed_with_warnings"}:
+        raise HTTPException(status_code=409, detail="Run is not ready for slide regeneration")
+
+    cache_key = (run_id, slide_id, normalized_idempotency_key)
+    cached = _REGENERATE_IDEMPOTENCY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    run_lock = _get_run_regeneration_lock(run_id)
+    if not run_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Slide regeneration already in progress for this run")
+
+    try:
+        result = regenerate_slide_only(
+            run_path,
+            slide_id=slide_id,
+            idempotency_key=normalized_idempotency_key,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        run_lock.release()
+
+    _REGENERATE_IDEMPOTENCY_CACHE[cache_key] = result
+    return result
+
+
 def _build_results_payload(
     *,
     run_id: str,
@@ -429,6 +544,15 @@ def _resolve_run_path(run_id: str) -> Path:
         return run_manager.get_run_path_by_id(run_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
+
+
+def _get_run_regeneration_lock(run_id: str) -> threading.Lock:
+    with _RUN_REGEN_LOCKS_GUARD:
+        lock = _RUN_REGEN_LOCKS.get(run_id)
+        if lock is None:
+            lock = threading.Lock()
+            _RUN_REGEN_LOCKS[run_id] = lock
+        return lock
 
 
 def _resolve_run_manager(run_path: Path) -> RunManager:

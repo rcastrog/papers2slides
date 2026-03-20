@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { cancelRun, getRunResults, getRunStatus, recoverRunA11, retryRun, type RunStatusResponse } from "../lib/api";
+import {
+  cancelRun,
+  getRunResults,
+  getRunStatus,
+  getSlideEvidence,
+  recoverRunA11,
+  regenerateSlide,
+  retryRun,
+  type RunStatusResponse,
+  type SlideEvidenceResponse,
+} from "../lib/api";
 import { formatStageLabel } from "../lib/stage-names";
 
 type RunStatusProps = {
@@ -21,6 +31,10 @@ export function RunStatus({ runId }: RunStatusProps) {
   const [hasPptxOutput, setHasPptxOutput] = useState(false);
   const [repetitionMetrics, setRepetitionMetrics] = useState<Record<string, unknown> | null>(null);
   const [qualityGate, setQualityGate] = useState<Record<string, unknown> | null>(null);
+  const [evidence, setEvidence] = useState<SlideEvidenceResponse | null>(null);
+  const [isEvidenceLoading, setIsEvidenceLoading] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [regeneratingSlideId, setRegeneratingSlideId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +71,11 @@ export function RunStatus({ runId }: RunStatusProps) {
   const isTerminal = useMemo(() => {
     if (!status) return false;
     return ["completed", "completed_with_warnings", "failed", "failed_with_quality_gate", "cancelled"].includes(status.status);
+  }, [status]);
+
+  const isEvidenceEligible = useMemo(() => {
+    if (!status) return false;
+    return status.status === "completed" || status.status === "completed_with_warnings";
   }, [status]);
 
   const canCancel = useMemo(() => {
@@ -110,6 +129,45 @@ export function RunStatus({ runId }: RunStatusProps) {
       cancelled = true;
     };
   }, [isResultsAvailable, runId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEvidence() {
+      if (!isEvidenceEligible) {
+        setEvidence(null);
+        setEvidenceError(null);
+        setIsEvidenceLoading(false);
+        return;
+      }
+
+      setIsEvidenceLoading(true);
+      setEvidenceError(null);
+      try {
+        const payload = await getSlideEvidence(runId);
+        if (!cancelled) {
+          setEvidence(payload);
+          setEvidenceError(null);
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          const message = loadError instanceof Error ? loadError.message : "Failed to load slide evidence";
+          setEvidence(null);
+          setEvidenceError(message);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsEvidenceLoading(false);
+        }
+      }
+    }
+
+    loadEvidence();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEvidenceEligible, runId]);
 
   function handleOpenReveal() {
     const revealUrl = `${process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000"}/runs/${runId}/reveal/index.html`;
@@ -168,6 +226,27 @@ export function RunStatus({ runId }: RunStatusProps) {
       setError(message);
     } finally {
       setIsRetrying(false);
+    }
+  }
+
+  async function handleRegenerateSlide(slideId: string) {
+    setRegeneratingSlideId(slideId);
+    setError(null);
+    setActionMessage(null);
+    try {
+      const idempotencyKey = buildSlideRegenerationIdempotencyKey(runId, slideId);
+      const result = await regenerateSlide(runId, slideId, idempotencyKey);
+      setActionMessage(`Slide regenerated: ${result.slide_id}`);
+      const refreshedEvidence = await getSlideEvidence(runId);
+      setEvidence(refreshedEvidence);
+      setEvidenceError(null);
+      const refreshedStatus = await getRunStatus(runId);
+      setStatus(refreshedStatus);
+    } catch (regenerateError) {
+      const message = regenerateError instanceof Error ? regenerateError.message : "Failed to regenerate slide";
+      setError(message);
+    } finally {
+      setRegeneratingSlideId(null);
     }
   }
 
@@ -304,6 +383,175 @@ export function RunStatus({ runId }: RunStatusProps) {
         ) : (
           <div className="muted">No warnings recorded for this run.</div>
         )}
+      </div>
+
+      <div className="panel stack">
+        <h3 className="section-title">Slide Evidence Inspector</h3>
+        {!isEvidenceEligible ? <div className="muted">Slide evidence is available when the run reaches a completed state.</div> : null}
+        {isEvidenceEligible && isEvidenceLoading ? <div className="muted">Loading slide evidence...</div> : null}
+        {isEvidenceEligible && evidenceError ? (
+          <div className="error" style={{ overflowWrap: "anywhere" }}>
+            {evidenceError}
+          </div>
+        ) : null}
+        {isEvidenceEligible && !isEvidenceLoading && !evidenceError && evidence?.warnings?.length ? (
+          <ul style={{ margin: 0, paddingLeft: 20 }}>
+            {evidence.warnings.map((warning, index) => (
+              <li key={`evidence-warning-${index}`} className="muted" style={{ marginBottom: 6, overflowWrap: "anywhere" }}>
+                {warning}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {isEvidenceEligible && !isEvidenceLoading && !evidenceError && evidence?.slides?.length ? (
+          <div className="stack">
+            {evidence.slides.map((slide) => (
+              <div key={slide.slide_id} className="panel stack" style={{ padding: 12 }}>
+                <div className="status-grid">
+                  <div>
+                    <strong>Slide {slide.slide_number}</strong>: {slide.slide_title || "Untitled slide"}
+                  </div>
+                  <div>
+                    Claims: {slide.claim_count} · No-evidence claims: {slide.no_evidence_claim_count}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {slide.confidence_flags.map((flag) => (
+                      <span
+                        key={`${slide.slide_id}-confidence-${flag}`}
+                        style={{
+                          border: "1px solid var(--border-strong)",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          fontSize: 12,
+                        }}
+                      >
+                        confidence: {flag}
+                      </span>
+                    ))}
+                    {slide.quality_flags.map((flag) => (
+                      <span
+                        key={`${slide.slide_id}-quality-${flag}`}
+                        style={{
+                          border: "1px solid var(--border-strong)",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          fontSize: 12,
+                        }}
+                      >
+                        quality: {flag}
+                      </span>
+                    ))}
+                    {!slide.confidence_flags.length && !slide.quality_flags.length ? (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        No confidence or quality flags.
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+
+                <details>
+                  <summary style={{ cursor: "pointer" }}>Claims ({slide.claims.length})</summary>
+                  <div className="stack" style={{ marginTop: 10 }}>
+                    {slide.claims.length ? (
+                      slide.claims.map((claim) => (
+                        <div key={claim.claim_id} className="panel stack" style={{ padding: 10 }}>
+                          <div style={{ overflowWrap: "anywhere" }}>{claim.claim_text}</div>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            {claim.confidence_flag ? (
+                              <span
+                                style={{
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 999,
+                                  padding: "2px 8px",
+                                  fontSize: 12,
+                                }}
+                              >
+                                confidence: {claim.confidence_flag}
+                              </span>
+                            ) : null}
+                            {claim.no_evidence ? (
+                              <span
+                                style={{
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 999,
+                                  padding: "2px 8px",
+                                  fontSize: 12,
+                                }}
+                              >
+                                no evidence
+                              </span>
+                            ) : null}
+                            {claim.quality_flags.map((flag) => (
+                              <span
+                                key={`${claim.claim_id}-quality-${flag}`}
+                                style={{
+                                  border: "1px solid var(--border-strong)",
+                                  borderRadius: 999,
+                                  padding: "2px 8px",
+                                  fontSize: 12,
+                                }}
+                              >
+                                {flag}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="status-grid">
+                            <div>
+                              Citation labels: {claim.citation_labels.length ? claim.citation_labels.join(", ") : "none"}
+                            </div>
+                            <div>
+                              Citation links: {claim.citation_links.length ? (
+                                <span>
+                                  {claim.citation_links.map((link, index) => (
+                                    <span key={`${claim.claim_id}-link-${index}`}>
+                                      <a href={link} target="_blank" rel="noopener noreferrer">
+                                        Source {index + 1}
+                                      </a>
+                                      {index < claim.citation_links.length - 1 ? " · " : ""}
+                                    </span>
+                                  ))}
+                                </span>
+                              ) : (
+                                "none"
+                              )}
+                            </div>
+                          </div>
+                          {claim.source_snippets.length ? (
+                            <ul style={{ margin: 0, paddingLeft: 20 }}>
+                              {claim.source_snippets.map((snippet, index) => (
+                                <li key={`${claim.claim_id}-snippet-${index}`} style={{ marginBottom: 6, overflowWrap: "anywhere" }}>
+                                  {snippet}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <div className="muted">No source snippet available for this claim.</div>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="muted">No claims available for this slide.</div>
+                    )}
+                  </div>
+                </details>
+
+                <div>
+                  <button
+                    className="btn-secondary"
+                    type="button"
+                    disabled={Boolean(regeneratingSlideId)}
+                    onClick={() => handleRegenerateSlide(slide.slide_id)}
+                  >
+                    {regeneratingSlideId === slide.slide_id ? "Regenerating..." : "Regenerate slide"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {isEvidenceEligible && !isEvidenceLoading && !evidenceError && !evidence?.slides?.length ? (
+          <div className="muted">No slide evidence available for this run.</div>
+        ) : null}
       </div>
 
       {actionMessage ? <div className="success">{actionMessage}</div> : null}
@@ -538,4 +786,12 @@ function truncateForSummary(value: string, maxLength: number): string {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 1)}...`;
+}
+
+function buildSlideRegenerationIdempotencyKey(runId: string, slideId: string): string {
+  const randomValue =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${runId}:${slideId}:${randomValue}`;
 }
