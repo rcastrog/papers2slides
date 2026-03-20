@@ -98,3 +98,39 @@ class RunInspectionResponse(BaseModel):
     asset_map_summary: dict[str, Any] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class ClaimEvidence(BaseModel):
+    """Claim-level provenance and confidence for inspector payloads."""
+
+    claim_id: str
+    claim_text: str
+    confidence_flag: str | None = None
+    quality_flags: list[str] = Field(default_factory=list)
+    citation_labels: list[str] = Field(default_factory=list)
+    citation_links: list[str] = Field(default_factory=list)
+    source_snippets: list[str] = Field(default_factory=list)
+    support_ids: list[str] = Field(default_factory=list)
+    no_evidence: bool = False
+
+
+class SlideEvidence(BaseModel):
+    """Slide-level evidence model surfaced by inspection API."""
+
+    slide_number: int
+    slide_id: str
+    slide_title: str
+    claim_count: int = 0
+    no_evidence_claim_count: int = 0
+    confidence_flags: list[str] = Field(default_factory=list)
+    quality_flags: list[str] = Field(default_factory=list)
+    claims: list[ClaimEvidence] = Field(default_factory=list)
+
+
+class SlideEvidenceResponse(BaseModel):
+    """Envelope for run-level slide evidence payloads."""
+
+    run_id: str
+    run_status: str | None = None
+    slides: list[SlideEvidence] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)

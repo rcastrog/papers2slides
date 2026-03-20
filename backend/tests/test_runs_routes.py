@@ -7,8 +7,10 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import BackgroundTasks
+from fastapi.testclient import TestClient
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +29,9 @@ from app.api.routes.runs import (
     _resolve_reveal_asset_path,
     _resolve_reveal_index_path,
 )
+import app.api.routes.runs as runs_routes
+from app.api.main import app
+from app.orchestrator.workflow import regenerate_slide_only
 
 
 class RunsRoutesResultsPayloadTests(unittest.TestCase):
@@ -347,7 +352,7 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
 
             resolved = _resolve_reveal_index_path(run_path=run_path, selected_path=None)
 
-            self.assertEqual(resolved, repaired_index)
+            self.assertEqual(resolved.resolve(), repaired_index.resolve())
 
     def test_resolve_reveal_asset_path_reads_from_reveal_repaired_assets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -358,7 +363,7 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
 
             resolved = _resolve_reveal_asset_path(run_path=run_path, asset_path="deck.css")
 
-            self.assertEqual(resolved, asset_file)
+            self.assertEqual(resolved.resolve(), asset_file.resolve())
 
     def test_retry_run_accepts_failed_with_quality_gate_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -449,6 +454,204 @@ class RunsRoutesResultsPayloadTests(unittest.TestCase):
             finally:
                 cancel_run.__globals__["_resolve_run_path"] = original_resolve
                 cancel_run.__globals__["_resolve_run_manager"] = original_manager
+
+
+class RunsRoutesSlideEvidenceAndRegenerateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.client = TestClient(app)
+        runs_routes._REGENERATE_IDEMPOTENCY_CACHE.clear()
+        runs_routes._RUN_REGEN_LOCKS.clear()
+
+    def test_get_slide_evidence_returns_200_for_completed_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "presentation").mkdir(parents=True, exist_ok=True)
+
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "run_test",
+                        "status": "completed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_path / "presentation" / "presentation_plan.json").write_text(
+                json.dumps(
+                    {
+                        "slides": [
+                            {
+                                "slide_number": 1,
+                                "title": "Slide 1",
+                                "key_points": ["Claim A"],
+                                "confidence_notes": ["medium confidence"],
+                                "citations": [{"short_citation": "Smith, 2024"}],
+                                "source_support": [{"support_id": "S1", "support_note": "Snippet"}],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch("app.api.routes.runs._resolve_run_path", return_value=run_path):
+                response = self.client.get("/runs/run_test/slides/evidence")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["run_id"], "run_test")
+            self.assertEqual(len(payload["slides"]), 1)
+            self.assertEqual(payload["slides"][0]["slide_id"], "slide-1")
+
+    def test_get_slide_evidence_returns_404_when_manifest_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            with patch("app.api.routes.runs._resolve_run_path", return_value=run_path):
+                response = self.client.get("/runs/run_test/slides/evidence")
+
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.json()["detail"], "Run manifest not found")
+
+    def test_get_slide_evidence_returns_409_when_run_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_test", "status": "running"}),
+                encoding="utf-8",
+            )
+
+            with patch("app.api.routes.runs._resolve_run_path", return_value=run_path):
+                response = self.client.get("/runs/run_test/slides/evidence")
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["detail"], "Run is not ready for slide evidence inspection")
+
+    def test_get_slide_evidence_returns_422_when_plan_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_test", "status": "completed"}),
+                encoding="utf-8",
+            )
+
+            with patch("app.api.routes.runs._resolve_run_path", return_value=run_path):
+                response = self.client.get("/runs/run_test/slides/evidence")
+
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["detail"], "Slide evidence artifacts are incomplete: presentation plan is missing")
+
+    def test_regenerate_slide_requires_idempotency_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_test", "status": "completed"}),
+                encoding="utf-8",
+            )
+
+            with patch("app.api.routes.runs._resolve_run_path", return_value=run_path):
+                response = self.client.post("/runs/run_test/slides/slide-1/regenerate")
+
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["detail"], "Idempotency-Key header is required")
+
+    def test_regenerate_slide_reuses_idempotency_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_test", "status": "completed"}),
+                encoding="utf-8",
+            )
+
+            call_counter = {"count": 0}
+
+            def _fake_regenerate(_run_path: Path, *, slide_id: str, idempotency_key: str) -> dict[str, object]:
+                call_counter["count"] += 1
+                return {
+                    "run_id": "run_test",
+                    "slide_id": slide_id,
+                    "status": "completed",
+                    "idempotency_key": idempotency_key,
+                }
+
+            headers = {"Idempotency-Key": "idem-123"}
+            with patch("app.api.routes.runs._resolve_run_path", return_value=run_path), patch(
+                "app.api.routes.runs.regenerate_slide_only",
+                side_effect=_fake_regenerate,
+            ):
+                first = self.client.post("/runs/run_test/slides/slide-1/regenerate", headers=headers)
+                second = self.client.post("/runs/run_test/slides/slide-1/regenerate", headers=headers)
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(call_counter["count"], 1)
+            self.assertEqual(first.json(), second.json())
+
+    def test_regenerate_slide_returns_409_when_run_lock_is_held(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_test", "status": "completed"}),
+                encoding="utf-8",
+            )
+
+            lock = runs_routes._get_run_regeneration_lock("run_test")
+            acquired = lock.acquire(blocking=False)
+            self.assertTrue(acquired)
+            try:
+                with patch("app.api.routes.runs._resolve_run_path", return_value=run_path):
+                    response = self.client.post(
+                        "/runs/run_test/slides/slide-1/regenerate",
+                        headers={"Idempotency-Key": "idem-409"},
+                    )
+            finally:
+                if acquired:
+                    lock.release()
+
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()["detail"], "Slide regeneration already in progress for this run")
+
+    def test_regenerate_slide_only_preserves_unrelated_slides(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_path = Path(temp_dir)
+            (run_path / "logs").mkdir(parents=True, exist_ok=True)
+            (run_path / "presentation").mkdir(parents=True, exist_ok=True)
+
+            (run_path / "logs" / "run_manifest.json").write_text(
+                json.dumps({"run_id": "run_test", "status": "completed"}),
+                encoding="utf-8",
+            )
+            original_plan = {
+                "slides": [
+                    {
+                        "slide_number": 1,
+                        "title": "Slide One",
+                        "key_points": ["Point 1"],
+                        "confidence_notes": ["initial"],
+                    },
+                    {
+                        "slide_number": 2,
+                        "title": "Slide Two",
+                        "key_points": ["Point 2"],
+                        "confidence_notes": ["steady"],
+                    },
+                ]
+            }
+            plan_path = run_path / "presentation" / "presentation_plan.json"
+            plan_path.write_text(json.dumps(original_plan), encoding="utf-8")
+
+            result = regenerate_slide_only(run_path, slide_id="slide-1", idempotency_key="idem-local")
+            updated_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["slide_id"], "slide-1")
+            self.assertEqual(updated_plan["slides"][1], original_plan["slides"][1])
+            self.assertGreater(len(updated_plan["slides"][0]["confidence_notes"]), len(original_plan["slides"][0]["confidence_notes"]))
 
 
 if __name__ == "__main__":

@@ -234,6 +234,44 @@ export type ArtifactPayloadResponse = {
   content: unknown;
 };
 
+export type ClaimEvidence = {
+  claim_id: string;
+  claim_text: string;
+  confidence_flag?: string | null;
+  quality_flags: string[];
+  citation_labels: string[];
+  citation_links: string[];
+  source_snippets: string[];
+  support_ids: string[];
+  no_evidence: boolean;
+};
+
+export type SlideEvidence = {
+  slide_number: number;
+  slide_id: string;
+  slide_title: string;
+  claim_count: number;
+  no_evidence_claim_count: number;
+  confidence_flags: string[];
+  quality_flags: string[];
+  claims: ClaimEvidence[];
+};
+
+export type SlideEvidenceResponse = {
+  run_id: string;
+  run_status?: string | null;
+  slides: SlideEvidence[];
+  warnings: string[];
+};
+
+export type SlideRegenerateResponse = {
+  run_id: string;
+  slide_id: string;
+  status: string;
+  idempotency_key: string;
+  updated_artifacts: string[];
+};
+
 export async function submitJob(input: SubmitJobInput): Promise<JobSubmissionResponse> {
   const formData = new FormData();
   if (input.pdfFile) {
@@ -316,6 +354,29 @@ export async function getRunAssetMap(runId: string): Promise<AssetMapResponse> {
     throw new Error(`getRunAssetMap failed (${response.status}): ${text}`);
   }
   return (await response.json()) as AssetMapResponse;
+}
+
+export async function getSlideEvidence(runId: string): Promise<SlideEvidenceResponse> {
+  const response = await fetch(`${API_BASE_URL}/runs/${runId}/slides/evidence`, { cache: "no-store" });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`getSlideEvidence failed (${response.status}): ${text}`);
+  }
+  return (await response.json()) as SlideEvidenceResponse;
+}
+
+export async function regenerateSlide(runId: string, slideId: string, idempotencyKey: string): Promise<SlideRegenerateResponse> {
+  const response = await fetch(`${API_BASE_URL}/runs/${runId}/slides/${encodeURIComponent(slideId)}/regenerate`, {
+    method: "POST",
+    headers: {
+      "Idempotency-Key": idempotencyKey,
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`regenerateSlide failed (${response.status}): ${text}`);
+  }
+  return (await response.json()) as SlideRegenerateResponse;
 }
 
 export async function cancelRun(runId: string): Promise<RunActionResponse> {

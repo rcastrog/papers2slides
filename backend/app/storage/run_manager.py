@@ -104,6 +104,28 @@ class RunManager:
         except OSError:
             return None
 
+    def read_first_json(self, relative_paths: list[str]) -> dict[str, Any] | None:
+        """Return first JSON artifact found from provided run-relative candidates."""
+        for relative_path in relative_paths:
+            candidate = str(relative_path).strip()
+            if not candidate:
+                continue
+            payload = self.read_json(candidate)
+            if payload is not None:
+                return payload
+        return None
+
+    def read_first_text(self, relative_paths: list[str]) -> str | None:
+        """Return first text artifact found from provided run-relative candidates."""
+        for relative_path in relative_paths:
+            candidate = str(relative_path).strip()
+            if not candidate:
+                continue
+            payload = self.read_text(candidate)
+            if payload is not None:
+                return payload
+        return None
+
     def _resolve_run_target(self, relative_path: str) -> Path:
         run_path = self.get_run_path()
         if not relative_path:
