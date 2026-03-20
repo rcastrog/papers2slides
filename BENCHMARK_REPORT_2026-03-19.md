@@ -40,7 +40,7 @@ Each breakdown table (by audience, style, target_slide_count, language, and pape
 
 * Benchmark ID: benchmark_20260319_214229
 * Generated at: 2026-03-20T01:30:51.026551+00:00
-* Runs planned: 24/w gm 
+* Runs planned: 24
 * Runs executed: 24
 
 ## Overall Results
@@ -98,5 +98,5 @@ Each breakdown table (by audience, style, target_slide_count, language, and pape
 
 ## Raw Artifact Pointers
 
-* Raw JSON: C:\Users\ricastro\OneDrive - Microsoft\paper2slides\backend\runs\benchmark_20260319_214229\benchmark_results.json
-* Raw CSV: C:\Users\ricastro\OneDrive - Microsoft\paper2slides\backend\runs\benchmark_20260319_214229\benchmark_results.csv
+* Raw JSON: backend/runs/benchmark_20260319_214229/benchmark_results.json
+* Raw CSV: backend/runs/benchmark_20260319_214229/benchmark_results.csv
